@@ -84,3 +84,20 @@ jobs:
           Path('/tmp/matrix-aligned-query.json').write_text(json.dumps({'version_id':version}))
           PY
           matrix-db db-array-read /tmp/matrix-aligned-query.json
+      - name: Compute derived wind and verify immutable cache reuse
+        run: |
+          python examples/prepare-derivation.py /tmp/matrix-derived-request.json
+          matrix-db db-derived-register examples/derived-wind-definitions.json
+          matrix-db db-derived-inspect examples/derived-reference.json
+          matrix-db db-derived-run /tmp/matrix-derived-request.json > /tmp/matrix-derived-first.json
+          matrix-db db-derived-run /tmp/matrix-derived-request.json > /tmp/matrix-derived-second.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          first=json.loads(Path('/tmp/matrix-derived-first.json').read_text())
+          second=json.loads(Path('/tmp/matrix-derived-second.json').read_text())
+          assert not first['cache_hit'] and second['cache_hit']
+          assert first['version_id']==second['version_id']
+          Path('/tmp/matrix-derived-query.json').write_text(json.dumps({'version_id':first['version_id']}))
+          PY
+          matrix-db db-array-read /tmp/matrix-derived-query.json

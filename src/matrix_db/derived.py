@@ -1,75 +1,85 @@
-"""Bounded CSV, JSON-array and JSON-lines imports with committed batch checkpoints."""
-import csv
-import gzip
+"""Immutable calculation definitions, dependency evaluation and exact-input caches."""
 import hashlib
-import itertools
-import json
-from pathlib import Path
-from uuid import uuid4
-import ijson
+import math
+from typing import Annotated, Literal
+from uuid import UUID
+import numpy as np
+import pyproj
+from pydantic import Field, StrictInt, model_validator, field_validator
 from psycopg.types.json import Jsonb
-from .contracts import Observation
-from .storage import PostgresStore
+from .alignment import AlignmentInput, align_field, cast_output, role
+from .arrays import ArrayStore, ArrayVariable, GridSpec, SubsetQuery, IndexWindow, CoordinateWindow, MAX_BYTES, canonical, digest
+from .contracts import Contract, Identifier, Number
+from .expressions import unit_info,parse,analyze,evaluate,registered_signature,registered_evaluate
+from .units import conversion
 
+ENGINE_VERSION='matrix-db-derived-1'
+Alias=Annotated[str,Field(pattern=r'^[A-Za-z][A-Za-z0-9_]*$',max_length=80)]
 
-def checksum(path):
-    digest=hashlib.sha256()
-    with Path(path).open('rb') as stream:
-        for chunk in iter(lambda:stream.read(1024*1024),b''):
-            digest.update(chunk)
-    return digest.hexdigest()
+class DefinitionRef(Contract):
+    id: Identifier
+    version: Annotated[StrictInt,Field(ge=1,le=1000000000)]
+    def key(self):return f'{self.id}@{self.version}'
 
+class InputRef(Contract):
+    kind: Literal['source','derived']
+    unit: str=Field(min_length=1)
+    source: Identifier | None=None
+    definition: DefinitionRef | None=None
+    @model_validator(mode='after')
+    def exactly_one(self):
+        if self.kind=='source' and (self.source is None or self.definition is not None):raise ValueError('source input requires only a source binding name')
+        if self.kind=='derived' and (self.definition is None or self.source is not None):raise ValueError('derived input requires only a definition reference')
+        unit_info(self.unit)
+        return self
 
-def records(path, format):
-    opener=gzip.open if str(path).endswith('.gz') else open
-    if format=='json':
-        with opener(path,'rb') as stream:
-            # Only top-level arrays are accepted; ijson streams one object at a time.
-            first=b''
-            while not first or first.isspace():
-                first=stream.read(1)
-                if not first: raise ValueError('JSON input must be an array')
-            if first!=b'[': raise ValueError('JSON input must be an array')
-        with opener(path,'rb') as stream:
-            yield from ijson.items(stream,'item',use_float=True)
-    else:
-        with opener(path,'rt',encoding='utf-8',newline='') as stream:
-            if format=='csv':
-                yield from csv.DictReader(stream)
-            elif format=='jsonl':
-                for line in stream:
-                    try: yield json.loads(line)
-                    except ValueError: yield {'__parse_error__':'invalid JSON line'}
-            else: raise ValueError('unsupported import format')
+class Parameter(Contract):
+    value: Number
+    unit: str='1'
+    @model_validator(mode='after')
+    def known_unit(self):unit_info(self.unit);return self
 
+class Definition(DefinitionRef):
+    description: str=Field(min_length=1,max_length=2000)
+    relationship: Literal['computational']='computational'
+    inputs: dict[Alias,InputRef]=Field(min_length=1,max_length=16)
+    parameters: dict[Alias,Parameter]=Field(default_factory=dict,max_length=16)
+    unit: str=Field(min_length=1)
+    expression: str | None=None
+    function: Literal['wind_speed','threshold_exceedance','difference','mean'] | None=None
+    function_version: Literal['1']='1'
+    missing: Literal['propagate','reject']='propagate'
+    invalid: Literal['mask','reject']='mask'
+    excluded_quality: list[Literal[0,1,2,3]]=Field(default_factory=lambda:[2])
+    minimum: float | None=None
+    maximum: float | None=None
 
-def normalize(raw, dataset, format, mapping=None):
-    if not isinstance(raw,dict): raise ValueError('record must be an object')
-    if '__parse_error__' in raw: raise ValueError(raw['__parse_error__'])
-    row={key:raw[source] for key,source in mapping.items() if source in raw} if mapping else dict(raw)
-    if format=='csv':
-        if 'schema_version' in row: row['schema_version']=int(row['schema_version'])
-        if 'vertical' in row: row['vertical']=json.loads(row['vertical']) if row['vertical'] else None
-        variable=next((v for v in dataset.variables if v.id==row.get('variable_id')),None)
-        if row.get('value')=='': row['value']=None
-        elif variable and 'value' in row:
-            row['value']=int(row['value']) if variable.data_type=='integer' else float(row['value'])
-        if row.get('forecast_issue_time')=='': row['forecast_issue_time']=None
-    return Observation.model_validate(row).validate_against(dataset)
+    @model_validator(mode='after')
+    def valid_calculation(self):
+        if (self.expression is None)==(self.function is None):raise ValueError('choose exactly one expression or registered function')
+        if set(self.inputs)&set(self.parameters):raise ValueError('input and parameter names must be distinct')
+        if self.minimum is not None and self.maximum is not None and self.minimum>self.maximum:raise ValueError('output range must be ordered')
+        signatures={name:unit_info(value.unit)[0] for name,value in {**self.inputs,**self.parameters}.items()}
+        if self.expression is not None:
+            signature,used=analyze(parse(self.expression),signatures)
+            if used!=set(signatures):raise ValueError('every declared input/parameter must be used')
+        else:signature=registered_signature(self.function,signatures)
+        if signature!=unit_info(self.unit)[0]:raise ValueError('declared output unit does not match calculation dimensions')
+        return self
 
+class Association(Contract):
+    id: Identifier
+    subject: DefinitionRef
+    object: DefinitionRef
+    kind: Literal['association']='association'
+    description: str=Field(min_length=1,max_length=2000)
 
-def import_file(connection, dataset_id, path, *, format, batch_size=500, job_id=None, mapping=None):
-    if format not in ('csv','json','jsonl'): raise ValueError('unsupported import format')
-    if type(batch_size) is not int or not 1<=batch_size<=10000: raise ValueError('batch_size must be between 1 and 10000')
-    if mapping is not None and (not isinstance(mapping,dict) or any(not isinstance(k,str) or not isinstance(v,str) for k,v in mapping.items())):
-        raise ValueError('mapping must map contract field names to source field names')
-    source_hash=checksum(path)
-    store=PostgresStore(connection)
-    with connection.transaction():
-        dataset=store.get(dataset_id).dataset
-    definition_hash=hashlib.sha256((dataset.model_dump_json()+json.dumps(mapping,sort_keys=True)).encode()).hexdigest()
-    with connection.transaction():
-        if job_id is None:
+class SourceBinding(Contract):
+    version_id: UUID
+    variable_id: Identifier
+    slices: dict[str,IndexWindow]=Field(default_factory=dict)
+    ranges: dict[str,CoordinateWindow]=Field(default_factory=dict)
+    alignment: AlignmentInput …7087 tokens truncated…None:
             job_id=str(uuid4())
             connection.execute('''INSERT INTO matrix_db.import_jobs
                 (id,dataset_id,source_checksum,dataset_checksum,format,status) VALUES (%s,%s,%s,%s,%s,'running')''',

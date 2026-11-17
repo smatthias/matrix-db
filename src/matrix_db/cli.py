@@ -10,7 +10,7 @@ from .catalogue import Catalogue, CatalogueEntry, TimeCoverage
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["validate", "inspect", "catalogue", "db-migrate", "db-ready", "db-seed", "db-inspect", "db-import", "db-job", "db-query", "db-revise", "db-withdraw", "db-history", "db-series", "db-playback", "db-array-demo", "db-array-read", "db-array-inventory", "db-align"])
+    parser.add_argument("command", choices=["validate", "inspect", "catalogue", "db-migrate", "db-ready", "db-seed", "db-inspect", "db-import", "db-job", "db-query", "db-revise", "db-withdraw", "db-history", "db-series", "db-playback", "db-array-demo", "db-array-read", "db-array-inventory", "db-align", "db-derived-register", "db-derived-associate", "db-derived-run", "db-derived-inspect"])
     parser.add_argument("path", type=Path, nargs="?")
     parser.add_argument('--variable')
     parser.add_argument('--provider')
@@ -73,6 +73,23 @@ def main():
                     else:
                         result=playback(connection,PlaybackQuery.model_validate(payload))
                     print(json.dumps(result,default=str,indent=2))
+                elif args.command in ('db-derived-register','db-derived-associate','db-derived-run','db-derived-inspect'):
+                    from .derived import Definition, DefinitionRef, Association, DerivationRequest, register_definitions, register_association, derive_and_publish, load_definitions
+                    if args.path is None:raise ValueError('derived command requires a JSON request file')
+                    payload=json.loads(args.path.read_text())
+                    if args.command == 'db-derived-register':
+                        if not isinstance(payload,list):raise ValueError('registration requires a JSON array of definitions')
+                        result={'registered':register_definitions(connection,[Definition.model_validate(item) for item in payload])}
+                    elif args.command == 'db-derived-associate':result={'id':register_association(connection,Association.model_validate(payload))}
+                    elif args.command == 'db-derived-inspect':
+                        reference=DefinitionRef.model_validate(payload)
+                        result=load_definitions(connection)[reference.key()].model_dump(mode='json')
+                    else:
+                        from .arrays import ArrayStore
+                        root=os.environ.get('MATRIX_DB_ARRAY_ROOT')
+                        if not root:raise ValueError('MATRIX_DB_ARRAY_ROOT is required')
+                        result=derive_and_publish(ArrayStore(connection,root),DerivationRequest.model_validate(payload))
+                    print(json.dumps(result,allow_nan=False,indent=2))
                 elif args.command in ('db-array-demo','db-array-read','db-array-inventory','db-align'):
                     import numpy as np
                     from .arrays import ArrayStore, GridSpec, SubsetQuery
@@ -104,6 +121,7 @@ def main():
                             values[variable['mask']]=None
                             variable['data']=values.tolist();variable['mask']=variable['mask'].tolist()
                             if variable.get('coverage') is not None:variable['coverage']=variable['coverage'].tolist()
+                            if variable.get('quality') is not None:variable['quality']=variable['quality'].tolist()
                     print(json.dumps(result,allow_nan=False,indent=2))
                 elif args.command == 'db-query':
                     from .queries import ObservationQuery

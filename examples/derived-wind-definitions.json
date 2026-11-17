@@ -1,0 +1,68 @@
+[
+  {
+    "id": "wind-speed",
+    "version": 1,
+    "description": "Magnitude of aligned east/north components",
+    "relationship": "computational",
+    "inputs": {
+      "east": {
+        "kind": "source",
+        "unit": "m/s",
+        "source": "east_source",
+        "definition": null
+      },
+      "north": {
+        "kind": "source",
+        "unit": "m/s",
+        "source": "north_source",
+        "definition": null
+      }
+    },
+    "parameters": {},
+    "unit": "m/s",
+    "expression": null,
+    "function": "wind_speed",
+    "function_version": "1",
+    "missing": "propagate",
+    "invalid": "mask",
+    "excluded_quality": [
+      2
+    ],
+    "minimum": 0.0,
+    "maximum": null
+  },
+  {
+    "id": "wind-alert",
+    "version": 1,
+    "description": "Strict threshold exceedance, not a calibrated risk estimate",
+    "relationship": "computational",
+    "inputs": {
+      "speed": {
+        "kind": "derived",
+        "unit": "m/s",
+        "source": null,
+        "definition": {
+          "id": "wind-speed",
+          "version": 1
+        }
+      }
+    },
+    "parameters": {
+      "limit": {
+        "value": 4,
+        "unit": "m/s"
+      }
+    },
+    "unit": "1",
+    "expression": "speed > limit",
+    "function": null,
+    "function_version": "1",
+    "missing": "propagate",
+    "invalid": "mask",
+    "excluded_quality": [
+      2
+    ],
+    "minimum": 0.0,
+    "maximum": 1.0
+  }
+]

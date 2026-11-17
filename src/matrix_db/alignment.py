@@ -135,7 +135,7 @@ def cast_output(data,mask,dtype):
     return result
 
 
-def align_field(data,mask,source_spec,source_variable,target_spec,target_variable,options):
+def align_field(data,mask,source_spec,source_variable,target_spec,target_variable,options,*,quality=None):
     source_axes={a.name:a for a in source_spec.axes};target_axes={a.name:a for a in target_spec.axes}
     ordered_source=[source_axes[name] for name in source_variable.dimensions]
     ordered_target=[target_axes[name] for name in target_variable.dimensions]
@@ -170,10 +170,13 @@ def align_field(data,mask,source_spec,source_variable,target_spec,target_variabl
     # Float64 computations are explicit; reject integers that would lose identity/precision.
     if data.dtype.kind in ('i','u') and np.any(np.abs(data[~mask].astype(object))>2**53):
         raise ValueError('alignment float64 arithmetic cannot exactly represent these integers')
+    if quality is not None and (quality.shape!=data.shape or quality.dtype!=np.dtype('uint8') or np.any(quality>3)):
+        raise ValueError('source quality flags are invalid')
     shape=tuple(len(axis.values) for axis in ordered_target)
-    if math.prod(shape)*17>MAX_BYTES:raise ValueError('aligned data/mask/coverage exceeds 64 MiB')
+    if math.prod(shape)*18>MAX_BYTES:raise ValueError('aligned data/mask/coverage exceeds 64 MiB')
     if math.prod(shape)>100000:raise ValueError('alignment exceeds 100000 output cells; request a smaller grid')
     output=np.zeros(shape,dtype='float64');missing=np.ones(shape,dtype=bool);coverage=np.zeros(shape,dtype='float64')
+    output_quality=np.full(shape,3,dtype='uint8');quality_ranks=[0,2,3,1];quality_codes=[0,3,1,2]
     source_intervals=target_intervals=None
     if options.temporal=='overlap':
         source_intervals=time_bounds(options.source_time_bounds,source_roles['time'])
@@ -216,27 +219,30 @@ def align_field(data,mask,source_spec,source_variable,target_spec,target_variabl
         count=math.prod(len(weights) for weights in contributors)
         evaluations+=count
         if evaluations>2000000:raise ValueError('alignment exceeds 2000000 contributions; split the request')
-        value=covered=0.
+        value=covered=0.;worst_quality=-1
         for combination in itertools.product(*contributors):
             source_index=tuple(item[0] for item in combination)
             if mask[source_index]:continue
+            code=3 if quality is None else int(quality[source_index])
+            worst_quality=max(worst_quality,quality_ranks[code])
             value+=float(data[source_index]*scale+offset)*math.prod(item[1] for item in combination)
             covered+=math.prod(item[2] for item in combination)
         coverage[destination]=min(1.,max(0.,covered))
+        if worst_quality>=0:output_quality[destination]=quality_codes[worst_quality]
         if covered>0 and covered+1e-10>=options.minimum_coverage:
             output[destination]=value/covered if options.renormalize_missing else value
             missing[destination]=False
     converted=cast_output(output,missing,target_variable.dtype)
     if options.categorical and np.any(converted[~missing].astype(np.float64)!=output[~missing]):
         raise ValueError('target dtype would change category codes')
-    return {'data':converted,'mask':missing,'coverage':coverage,
+    return {'data':converted,'mask':missing,'coverage':coverage,'quality':output_quality,
             'dimensions':target_variable.dimensions,'unit':target_variable.unit}
 
 
 def align(arrays:ArrayStore,request:AlignmentRequest):
     request=AlignmentRequest.model_validate_json(request.model_dump_json())
     target_variables={v.id:v for v in request.target.variables};target_axes={a.name:a for a in request.target.axes}
-    total=sum(math.prod(len(target_axes[name].values) for name in v.dimensions)*17 for v in request.target.variables)
+    total=sum(math.prod(len(target_axes[name].values) for name in v.dimensions)*18 for v in request.target.variables)
     if total>MAX_BYTES:raise ValueError('combined aligned output exceeds 64 MiB')
     result={};sources=[]
     for source in request.inputs:
@@ -251,7 +257,7 @@ def align(arrays:ArrayStore,request:AlignmentRequest):
         if field.get('coverage') is not None and np.any((field['coverage']<1-1e-10)&~field['mask']):
             raise ValueError('chained alignment requires full coverage in nonmissing source cells')
         result[source.output_variable]=align_field(field['data'],field['mask'],spec,variable,request.target,
-                                                   target_variables[source.output_variable],source)
+                                                   target_variables[source.output_variable],source,quality=field.get('quality'))
         sources.append({'version_id':str(source.version_id),'manifest_checksum':hashlib.sha256(canonical(manifest).encode()).hexdigest(),
                         'parameters':source.model_dump(mode='json'),'source_unit':variable.unit,
                         'unit_conversion':dict(zip(('scale','offset'),conversion(variable.unit,target_variables[source.output_variable].unit)))})
@@ -264,6 +270,6 @@ def align_and_publish(arrays,request):
     result=align(arrays,request)
     def provider(variable,slices):
         field=result['variables'][variable]
-        return field['data'][slices],field['mask'][slices],field['coverage'][slices]
+        return field['data'][slices],field['mask'][slices],field['coverage'][slices],field['quality'][slices]
     version=arrays.publish(request.target,provider,provenance=result['provenance'])
     return {'version_id':str(version),'provenance':result['provenance']}

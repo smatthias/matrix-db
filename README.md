@@ -46,4 +46,36 @@ Programmatic registration and updates use `CatalogueEntry`, `Catalogue.register(
 
 ## Next milestone
 
-Step 3 is persistent storage and migrations. Persistent storage, migrations, live ingestion, APIs, array storage, authentication and GeoSentinel integration are planned, not implemented. The broader roadmap described in the planning conversation is not a claim of available functionality.
+Step 3 adds the PostgreSQL backend described below. Live ingestion, APIs, array storage, authentication and GeoSentinel integration remain planned. The broader roadmap described in the planning conversation is not a claim of available functionality.
+
+## Step 3: PostgreSQL/PostGIS storage
+
+Copy `.env.example` to `.env`, choose a local password and set the matching connection URL. Compose reads `.env`; the CLI requires the URL exported into its environment. Use URL encoding for password characters in the connection URL.
+
+```sh
+cp .env.example .env
+# Edit .env before starting the local database.
+docker compose up -d --wait
+export MATRIX_DB_DATABASE_URL='postgresql://matrix:YOUR_LOCAL_PASSWORD@127.0.0.1:5432/matrix'
+matrix-db db-migrate
+matrix-db db-ready
+matrix-db db-seed examples/weather.json
+matrix-db db-inspect demo-weather
+docker compose restart db
+matrix-db db-inspect demo-weather
+```
+
+The named Compose volume persists across restarts. `db-seed` registers and writes its bundle in one transaction; repeating a seed fails on duplicate identity without partially writing. Connections require an explicit URL and time out after five seconds. CLI database failures suppress connection details to avoid printing credentials. Use a dedicated development database; the Compose role owns its database and installs PostGIS during migration. Production role separation is future work.
+
+Two append-only, checksummed migrations create the sources/datasets/variables/observations tables, foreign keys, dataset/source uniqueness, generated PostGIS points, and dataset-variable-time/time/GiST indexes. Migration execution is transactionally locked. Re-running migrations is safe; changed migration checksums, non-contiguous histories and unsupported downgrades are rejected. Back up before upgrading; failed transactional migrations roll back. No destructive downgrade command is provided.
+
+`PostgresStore` supports catalogue registration, lookup, updates and discovery, plus atomic observation insertion and ordered retrieval. Observation identity is `(dataset_id, id)`; collisions are rejected. Source identity is `(provider, source_id)`. Measurement contracts cannot change after observations exist; lifecycle and descriptive metadata remain editable. Caller-owned transactions can combine operations atomically. Current catalogue search loads metadata into memory and observation retrieval is intended for the example, not large unbounded production requests.
+
+Database integration tests require **a dedicated disposable test database**: they drop the `matrix_db` schema. Never point `MATRIX_DB_TEST_DATABASE_URL` at production or a database containing retained data.
+
+```sh
+MATRIX_DB_TEST_DATABASE_URL='postgresql://matrix:YOUR_LOCAL_PASSWORD@127.0.0.1:5432/matrix_test' \
+  python -m unittest discover -s tests -v
+```
+
+Create `matrix_test` separately before running. Without that variable the seven database integration tests are explicitly skipped; the PostGIS CI job sets it and runs them, followed by migrate/readiness/seed/inspect smoke commands. Local server restart verification requires Docker; reconnect persistence is covered in integration tests. Step 4 is ingestion jobs, duplicate policies and rejection reporting.

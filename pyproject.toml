@@ -7,10 +7,13 @@ name = "geosentinel-matrix-db"
 version = "0.1.0"
 description = "Environmental data contracts for GeoSentinel Matrix DB"
 requires-python = ">=3.11"
-dependencies = ["pydantic>=2.10,<3"]
+dependencies = ["pydantic>=2.10,<3", "psycopg[binary]>=3.2,<4"]
 
 [project.scripts]
 matrix-db = "matrix_db.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+matrix_db = ["migrations/*.sql"]

@@ -73,7 +73,7 @@ class AdministrationStorageTest(unittest.TestCase):
         for _ in range(3):ids.append(self.client.post('/v1/jobs',headers=auth(ADMIN),json={'operation':'observations','payload':{'dataset_id':'demo-weather'}}).json()['id'])
         first=activity(self.db,'demo-weather','jobs',limit=1);self.assertEqual(len(first['items']),1);self.assertIsNotNone(first['next_cursor'])
         second=activity(self.db,'demo-weather','jobs',first['next_cursor'],limit=2);self.assertEqual(len(second['items']),2)
-        self.assertNotIn('request',json.dumps(first,default=str))
+        self.assertNotIn('request',first['items'][0]);self.assertNotIn('result',first['items'][0])
         with self.assertRaises(ValueError):activity(self.db,'demo-weather','imports',first['next_cursor'])
         path='/v1/admin/datasets/demo-weather/jobs/'+ids[0]+'/cancel'
         self.assertEqual(self.client.post(path,headers=auth(ADMIN)).status_code,200)

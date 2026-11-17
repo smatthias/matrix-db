@@ -231,7 +231,7 @@ def source_field(arrays,binding,target):
         temporary=target.model_copy(deep=True)
         mapped=ArrayVariable(id=binding.variable_id,unit=variable.unit,dtype='float64',dimensions=target_variable.dimensions,chunks=target_variable.chunks)
         temporary.variables=[mapped]
-        return align_field(field['data'],field['mask'],selected_spec,variable,temporary,mapped,binding.alignment,quality=field.get('quality'))
+        return align_field(field['data'],field['mask'],selected_spec,variable,temporary,mapped,binding.alignment,quality=field.get('quality'),check_cancel=arrays.check_cancel)
     source_axes={axis.name:axis for axis in selected_spec.axes};target_axes={axis.name:axis for axis in target.axes}
     source_roles=[role(source_axes[name]) for name in variable.dimensions]
     target_roles=[role(target_axes[name]) for name in target_variable.dimensions]
@@ -289,6 +289,7 @@ def derive_and_publish(arrays:ArrayStore,request:DerivationRequest):
         bound={name:source_field(arrays,binding,request.target) for name,binding in request.bindings.items()}
         computed={}
         for key in order:
+            arrays.check_cancel()
             definition=definitions[key]
             inputs={name:bound[reference.source] if reference.kind=='source' else computed[reference.definition.key()]
                     for name,reference in definition.inputs.items()}
@@ -308,6 +309,7 @@ def derive_and_publish(arrays:ArrayStore,request:DerivationRequest):
         for name,binding in request.bindings.items():
             connection.execute('INSERT INTO matrix_db.derived_cache_sources VALUES (%s,%s,%s)',(cache_key,name,binding.version_id))
         for key in order:
+            arrays.check_cancel()
             definition=definitions[key]
             connection.execute('INSERT INTO matrix_db.derived_cache_definitions VALUES (%s,%s,%s)',(cache_key,definition.id,definition.version))
     return {'version_id':str(version),'cache_key':cache_key,'cache_hit':False}

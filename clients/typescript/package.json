@@ -1,0 +1,6 @@
+{
+  "name": "@matrix-db/client", "version": "0.1.0", "type": "module",
+  "exports": "./dist/index.js", "types": "./dist/index.d.ts",
+  "scripts": {"build": "tsc", "test": "npm run build && node --test tests/*.mjs"},
+  "devDependencies": {"typescript": "~5.8.3"}
+}

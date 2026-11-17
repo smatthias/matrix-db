@@ -135,7 +135,7 @@ def cast_output(data,mask,dtype):
     return result
 
 
-def align_field(data,mask,source_spec,source_variable,target_spec,target_variable,options,*,quality=None):
+def align_field(data,mask,source_spec,source_variable,target_spec,target_variable,options,*,quality=None,check_cancel=None):
     source_axes={a.name:a for a in source_spec.axes};target_axes={a.name:a for a in target_spec.axes}
     ordered_source=[source_axes[name] for name in source_variable.dimensions]
     ordered_target=[target_axes[name] for name in target_variable.dimensions]
@@ -185,7 +185,8 @@ def align_field(data,mask,source_spec,source_variable,target_spec,target_variabl
     if source_spec.crs!=target_spec.crs:
         transform=pyproj.Transformer.from_crs(target_spec.crs,source_spec.crs,always_xy=True)
     spatial_cache={};axis_cache={};evaluations=0
-    for destination in np.ndindex(shape):
+    for destination_number,destination in enumerate(np.ndindex(shape)):
+        if check_cancel is not None and destination_number%100==0:check_cancel()
         positions={role(axis):index for axis,index in zip(ordered_target,destination)}
         horizontal=(positions['horizontal_x'],positions['horizontal_y'])
         if horizontal not in spatial_cache:
@@ -257,7 +258,7 @@ def align(arrays:ArrayStore,request:AlignmentRequest):
         if field.get('coverage') is not None and np.any((field['coverage']<1-1e-10)&~field['mask']):
             raise ValueError('chained alignment requires full coverage in nonmissing source cells')
         result[source.output_variable]=align_field(field['data'],field['mask'],spec,variable,request.target,
-                                                   target_variables[source.output_variable],source,quality=field.get('quality'))
+                                                   target_variables[source.output_variable],source,quality=field.get('quality'),check_cancel=arrays.check_cancel)
         sources.append({'version_id':str(source.version_id),'manifest_checksum':hashlib.sha256(canonical(manifest).encode()).hexdigest(),
                         'parameters':source.model_dump(mode='json'),'source_unit':variable.unit,
                         'unit_conversion':dict(zip(('scale','offset'),conversion(variable.unit,target_variables[source.output_variable].unit)))})

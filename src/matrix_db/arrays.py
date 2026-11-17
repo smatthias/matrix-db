@@ -153,7 +153,8 @@ class SubsetQuery(Contract):
         return self
 
 class ArrayStore:
-    def __init__(self,connection,root):
+    def __init__(self,connection,root,*,check_cancel=None):
+        self.check_cancel=check_cancel or (lambda:None)
         self.connection=connection
         self.root=Path(root).resolve()
         self.root.mkdir(parents=True,exist_ok=True)
@@ -186,6 +187,7 @@ class ArrayStore:
                 directory=staging/variable.id;directory.mkdir()
                 variable_coverage=None;variable_quality=None
                 for offset in itertools.product(*starts):
+                    self.check_cancel()
                     slices=tuple(slice(start,min(start+chunk,size)) for start,chunk,size in zip(offset,variable.chunks,shape))
                     expected=tuple(s.stop-s.start for s in slices)
                     supplied=read_chunk(variable.id,slices)
@@ -256,7 +258,7 @@ class ArrayStore:
         if digest(path)!=row[1]:raise ValueError('stored manifest checksum mismatch')
         return row[0]
 
-    def read(self,query:SubsetQuery):
+    def read(self,query:SubsetQuery,*,max_bytes=MAX_BYTES):
         query=SubsetQuery.model_validate_json(query.model_dump_json())
         manifest=self.manifest(query.version_id)
         spec=GridSpec.model_validate(manifest['spec'])
@@ -292,7 +294,7 @@ class ArrayStore:
         coverage_variables={chunk['variable'] for chunk in manifest['chunks'] if chunk.get('coverage',False)}
         quality_variables={chunk['variable'] for chunk in manifest['chunks'] if chunk.get('quality',False)}
         size=sum(math.prod(len(indices[name]) for name in variables[v].dimensions)*(np.dtype(variables[v].dtype).itemsize+1+(8 if v in coverage_variables else 0)+(1 if v in quality_variables else 0)) for v in selected)
-        if size>MAX_BYTES:raise ValueError('subset exceeds 64 MiB; select a smaller window')
+        if size>min(MAX_BYTES,max_bytes):raise ValueError('subset exceeds read budget; select a smaller window')
         result={};read_count=0
         for name in selected:
             variable=variables[name]
@@ -304,6 +306,7 @@ class ArrayStore:
                 all(np.any((indices[dimension]>=offset)&(indices[dimension]<offset+length))
                     for dimension,offset,length in zip(variable.dimensions,chunk['offset'],chunk['shape']))]
             for chunk in relevant:
+                self.check_cancel()
                 path=self.root/'versions'/str(query.version_id)/chunk['path']
                 if digest(path)!=chunk['checksum']:raise ValueError('chunk checksum mismatch')
                 with np.load(path,allow_pickle=False) as archive:

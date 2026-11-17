@@ -6,3 +6,6 @@ build/
 dist/
 .env
 array-data/
+
+clients/typescript/node_modules/
+clients/typescript/dist/

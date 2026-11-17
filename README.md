@@ -265,3 +265,43 @@ Completing a run requires exactly one final reference for every declared variabl
 Comparisons accept a completed run on at least one side; the other side may be another completed run or a pinned array field, including observational data. Each side explicitly selects its variable and optional index/coordinate subset. The target is a single-variable GridSpec. Grids must match or include explicit Step 8 alignment rules; no automatic interpolation is assumed. Results are **right minus left**, with masks, coverage and quality propagated. Units are checked dimensionally: subtracting absolute temperatures requires a difference unit such as `delta_K`, not `degC`. Output versions store run/scenario/engine references, source versions/checksums, selection/alignment rules and software versions. Stored comparisons retain both source-version references. Difference fields can be read as map slices or location time series through the array subset API.
 
 Scenario input resolution is rechecked when starting a run; the snapshot never resolves a mutable 'latest' alias. Input integrity does not guarantee that an engine actually used those inputs or reproduced its declared configuration. Comparisons and direct result reads use the existing bounded array/alignment policies; scenario snapshot verification streams checksums rather than loading entire fields. Provisional histories are bounded by individual API calls only; retention and job scheduling come later. Filesystem publication still precedes database commit: rollback/crash can leave unreferenced directories, which inventory reports without deletion. Back up PostgreSQL and the chunk store together. Step 11 adds the service API, client libraries and GeoSentinel integration.
+
+## Step 11: versioned service API and clients
+
+Install the package, export the database URL, array root and `MATRIX_DB_API_KEYS`, then run `matrix-db-api`. It binds to **127.0.0.1:8000**; production TLS/reverse-proxy configuration belongs to deployment. `matrix-db-worker` runs the durable calculation queue separately (`--once` processes at most one job). The API never runs migrations automatically: initialize/upgrade with `matrix-db db-migrate` first.
+
+`MATRIX_DB_API_KEYS` is a JSON array of `{token,subject,role,datasets}`. Tokens require at least 24 characters; generate random service credentials and keep them out of source control. The service fails startup with missing/empty credentials or missing array-root configuration. Roles are reader, ingestor and admin. Readers access only listed dataset IDs; ingestors additionally register/update/ingest their listed datasets; admins can access all datasets and administrative workflows. Advanced scenarios, revisions, derived-definition registration and calculation jobs require admin credentials. This is service/dataset access control, not project isolation or per-user OAuth. Policy changes require restarting the API; workers reload environment settings between jobs. No browser bundle should contain a Matrix DB service token.
+
+Endpoints are under `/v1`; interactive documentation and the generated OpenAPI contract are at `/docs` and `/openapi.json`. Public `/health/live` checks the process; authenticated `/v1/ready` checks schema version/PostGIS. Core interfaces include:
+
+| Interface | Endpoints |
+|---|---|
+| Catalogue | GET `/datasets`, POST `/datasets/search`, GET/PUT `/datasets/{id}`, POST `/datasets` |
+| Array versions | GET `/datasets/{id}/versions`, GET `/arrays/{uuid}`, POST `/arrays/subset` |
+| Observations | POST `/observations`, `/observations/query`, `/observations/stream`; GET `/observations/{dataset}/{id}/history` |
+| Time Machine | POST `/series`, `/playback`, `/observations/revise`, `/observations/withdraw` |
+| Import status | GET `/imports/{job_id}` |
+| Derived definitions | POST `/derived/definitions` |
+| Simulation records | POST `/scenarios`, `/scenarios/resolve`, `/runs`, `/runs/transition`, `/runs/outputs`; GET `/runs/{uuid}` |
+| Async calculations | POST `/jobs`, GET `/jobs/{uuid}`, POST `/jobs/{uuid}/cancel` |
+
+Request bodies reuse the existing data/query contracts. Observation ingestion accepts `{dataset_id, observations}` and commits the whole batch atomically. Request bodies are capped at 2 MiB. Native array reads are capped at 512 KiB per HTTP request, with a 2 MiB JSON serialization budget; use smaller subsets for larger fields. Non-admin array responses omit provenance because it may contain other datasets' records or operational configuration. Full provenance remains available to admins and through trusted storage APIs. Catalogue filters currently load metadata into memory; this remains a small-catalogue implementation.
+
+Observations retain units, source references, quality, revision and recording time. Normal query responses include a filter-bound next cursor. NDJSON streaming serves one bounded page, with a metadata line carrying the next cursor followed by observation lines; it does not materialize an unlimited result. Version listing uses UUID ordering/cursors, not a mutable latest alias. Most synchronous SQL operations have a 15-second statement timeout. Errors use `{error:{code,message,request_id}}`, and responses include `X-Request-ID`. Validation and server errors avoid echoing raw credentials, connection strings or filesystem paths.
+
+Async job operations are observations, alignment, derivation and comparison. Submission validates the request and current scope before persisting it. Jobs survive API restarts; a separate worker claims queued jobs with row locking. Job inspection/cancellation checks ownership and current permissions; admin credentials can manage all jobs. Inputs are pinned by the existing query/version contracts. `work_done` counts cooperative activity checkpoints; it is **not percent complete**, and total work is unknown. Cancellation of queued jobs is immediate; running cancellation is acknowledged between chunks/calculation checkpoints or after a database operation. Worker SQL has a 30-second statement timeout. A completion/cancellation race is decided transactionally, so cancelled computations cannot commit their result references.
+
+Cancellation can leave unreferenced filesystem directories after a publication rename; inventory handles this as before. Running jobs left by an abruptly killed worker are not automatically leased/requeued in this milestone. An operator must investigate/recover those records; distributed leases/recovery are later work. API disconnects alone do not cancel persisted jobs: explicitly call the cancellation endpoint. Credentials are rechecked when a worker claims a job and when results are read; revoking a running job's credential requires cancelling it or restarting the worker for policy changes to take effect.
+
+The Python `MatrixDBClient` uses bounded timeouts, structured errors, paginated observation iteration, and retries only declared read-only requests. Mutation calls are never automatically replayed. It exposes catalogue/query/subset/series/playback, scenario/run/output and job operations:
+
+```python
+from matrix_db.client import MatrixDBClient
+with MatrixDBClient('http://127.0.0.1:8000', service_token) as client:
+    for page in client.pages({'dataset_id': 'demo-weather', 'limit': 100}):
+        print(len(page['items']))
+```
+
+The TypeScript client is in `clients/typescript` (`npm ci && npm test`). It provides typed observation/subset models, cursor iteration, AbortSignal support, timeouts and the same no-mutation-retry rule. Advanced structured payloads remain JSON-shaped and follow OpenAPI schemas. TypeScript build output and node_modules are excluded from the repository. Clients reject URLs with embedded credentials and do not follow redirects carrying authorization headers.
+
+A GeoSentinel integration uses its authenticated backend as a read-only gateway: server-side credentials, dataset discovery, observation GeoJSON, location playback inspection, time-series buckets and array subsets. The explorer workflow uses persisted data; it does not fetch live providers or substitute synthetic observations on error. API and gateway changes require deployment/configuration before users can access a live connected service. Raster tile delivery, OAuth/project permissions, high-throughput catalogue queries and worker lease recovery remain later milestones. Step 12 is performance, recovery and release qualification.

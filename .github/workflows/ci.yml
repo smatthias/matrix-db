@@ -35,6 +35,7 @@ jobs:
       MATRIX_DB_TEST_DATABASE_URL: postgresql://matrix:ci-only-disposable@localhost:5432/matrix_test
       MATRIX_DB_DATABASE_URL: postgresql://matrix:ci-only-disposable@localhost:5432/matrix_test
       MATRIX_DB_ARRAY_ROOT: /tmp/matrix-db-arrays
+      MATRIX_DB_API_KEYS: '[{"token":"matrix-ci-admin-token-not-for-production","subject":"ci","role":"admin"}]'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -123,3 +124,18 @@ jobs:
           PY
           matrix-db db-run-inspect /tmp/matrix-run-query.json
           matrix-db db-array-read /tmp/matrix-comparison-query.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --prefix clients/typescript --ignore-scripts
+      - run: npm test --prefix clients/typescript
+      - run: python scripts/api_smoke.py
+  typescript:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --prefix clients/typescript --ignore-scripts
+      - run: npm test --prefix clients/typescript

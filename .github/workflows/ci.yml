@@ -19,6 +19,7 @@ jobs:
       - run: matrix-db-quality --help
       - run: matrix-db-lifecycle --help
       - run: matrix-db-notify --help
+      - run: matrix-db-resources --help
       - run: python -c "from matrix_db.provider_ingestion import load_sources; assert len(load_sources('examples/providers.json')) == 5"
   postgres:
     runs-on: ubuntu-latest
@@ -179,6 +180,7 @@ jobs:
           /tmp/matrix-release/bin/matrix-db-quality --help
           /tmp/matrix-release/bin/matrix-db-lifecycle --help
           /tmp/matrix-release/bin/matrix-db-notify --help
+          /tmp/matrix-release/bin/matrix-db-resources --help
       - uses: actions/upload-artifact@v4
         with:
           name: release-candidate-packages

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Literal
 from pydantic import Field,model_validator
 from .contracts import Contract,Identifier
+from .quotas import ResourceLimits
 
 class Principal(Contract):
     subject: str=Field(min_length=1)
@@ -20,6 +21,7 @@ class Principal(Contract):
 class Settings:
     def __init__(self,keys,array_root):
         if not keys:raise ValueError('at least one API key is required')
+        self.limits=ResourceLimits.from_environment()
         self.keys={};subjects={}
         for value in keys:
             value=dict(value);token=value.pop('token',None)

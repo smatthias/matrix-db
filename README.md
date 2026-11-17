@@ -399,3 +399,18 @@ for private subscriptions/inboxes, alongside its ordinary reader/admin keys.
 See [ownership, API, worker and delivery semantics](docs/notifications.md). Delivery is
 in-app only: no external email/webhook/push is sent. Full browser E2E and deployment remain
 unverified. Step 18 covers quotas and resource controls.
+
+
+## Step 18 — Quotas and resource controls
+
+Configurable resource limits add distributed per-credential minute admission, per-process
+request execution slots, global/per-credential active-job caps, atomic observation/revision
+capacity checks, array-version/logical-byte accounting, subscription caps and inbox
+backpressure. Capacity failures preserve data/checkpoints and return explicit HTTP status,
+resource details and transient Retry-After hints. Clients do not automatically replay them.
+GeoSentinel preserves capacity responses and its admin page exposes read-only resource usage.
+
+See [configuration, accounting semantics and operator inspection](docs/resources.md).
+These are logical application budgets, not OS hard quotas or billing. Physical staging,
+backups, existing history and archived payloads are not automatically deleted. Production
+load/fairness and deployment remain unverified. Step 19 covers hazard and event detection.

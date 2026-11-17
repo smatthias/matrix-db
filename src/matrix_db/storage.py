@@ -7,7 +7,7 @@ from psycopg.types.json import Jsonb
 from .catalogue import Catalogue, CatalogueEntry
 from .contracts import Observation
 
-LATEST_VERSION = 14
+LATEST_VERSION = 15
 
 
 def connect():
@@ -109,11 +109,17 @@ class PostgresStore:
         return replacement
 
     def add_observations(self, dataset_id, observations):
+        from itertools import islice
+        from .quotas import ResourceLimits,QuotaExceeded,check_records
+        limits=ResourceLimits.from_environment()
+        observations=list(islice(observations,limits.observations_per_batch+1))
+        if len(observations)>limits.observations_per_batch:raise QuotaExceeded('observations_per_batch',limits.observations_per_batch)
         with self.connection.transaction():
-            row = self.connection.execute('SELECT entry FROM matrix_db.datasets WHERE id=%s FOR SHARE', (dataset_id,)).fetchone()
+            row = self.connection.execute('SELECT entry FROM matrix_db.datasets WHERE id=%s FOR UPDATE', (dataset_id,)).fetchone()
             if row is None:
                 raise KeyError(dataset_id)
             dataset = CatalogueEntry.model_validate(row[0]).dataset
+            check_records(self.connection,dataset_id,len(observations),limits)
             for record in observations:
                 record = Observation.model_validate_json(record.model_dump_json()).validate_against(dataset)
                 self.connection.execute('''INSERT INTO matrix_db.observations

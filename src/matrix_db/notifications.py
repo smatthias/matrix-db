@@ -44,7 +44,9 @@ def create(connection,request,principal,delegated=None):
     lock=int.from_bytes(bytes.fromhex(owner)[:8],'big',signed=True)
     connection.execute('SELECT pg_advisory_xact_lock(%s)',(lock,))
     count=connection.execute('SELECT count(*) FROM matrix_db.notification_subscriptions WHERE owner=%s AND NOT deleted',(owner,)).fetchone()[0]
-    if count>=50:raise ValueError('subscription limit reached')
+    from .quotas import ResourceLimits,QuotaExceeded
+    cap=ResourceLimits.from_environment().subscriptions_per_owner
+    if count>=cap:raise QuotaExceeded('subscriptions_per_owner',cap)
     connection.execute('SELECT id FROM matrix_db.datasets WHERE id=%s FOR UPDATE',(request.dataset_id,));PostgresStore(connection).get(request.dataset_id)
     cursor=0 if request.start=='beginning' else connection.execute('SELECT coalesce(max(sequence),0) FROM matrix_db.quality_events WHERE dataset_id=%s',(request.dataset_id,)).fetchone()[0]
     ident=uuid4();definition=request.model_dump(mode='json')
@@ -114,16 +116,22 @@ def run_one(settings,connection_factory,batch_size=100):
         rows=connection.execute('''SELECT e.sequence,e.kind,e.at,e.incident_id,e.evaluation_id,i.rule_id,i.severity
             FROM matrix_db.quality_events e JOIN matrix_db.quality_incidents i ON i.id=e.incident_id
             WHERE e.dataset_id=%s AND e.sequence>%s ORDER BY e.sequence LIMIT %s''',(dataset,cursor,batch_size)).fetchall()
+        from .quotas import inbox_capacity
+        processed=False
         for sequence,kind,at,incident,evaluation,rule,severity in rows:
-            if not matches(request,kind,severity,rule):continue
+            if not matches(request,kind,severity,rule):cursor=sequence;processed=True;continue
+            existing=connection.execute('SELECT id FROM matrix_db.notification_deliveries WHERE owner=%s AND event_sequence=%s',(owner,sequence)).fetchone()
+            if existing is None and not inbox_capacity(connection,owner,settings.limits):
+                connection.execute("UPDATE matrix_db.notification_subscriptions SET last_sequence=%s,last_polled_at=clock_timestamp(),error_code='inbox_capacity' WHERE id=%s",(cursor,ident))
+                return processed
             payload={'event_sequence':sequence,'dataset_id':dataset,'kind':kind,'at':at.isoformat(),'incident_id':str(incident),
                 'evaluation_id':str(evaluation) if evaluation else None,'rule_id':rule,'severity':severity}
             delivery=connection.execute('''INSERT INTO matrix_db.notification_deliveries(owner,dataset_id,event_sequence,payload)
                 VALUES (%s,%s,%s,%s) ON CONFLICT(owner,event_sequence) DO UPDATE SET owner=EXCLUDED.owner RETURNING id''',(owner,dataset,sequence,Jsonb(payload))).fetchone()[0]
             connection.execute('INSERT INTO matrix_db.notification_matches VALUES (%s,%s) ON CONFLICT DO NOTHING',(delivery,ident))
-        if rows:cursor=rows[-1][0]
+            cursor=sequence;processed=True
         connection.execute('UPDATE matrix_db.notification_subscriptions SET last_sequence=%s,last_polled_at=clock_timestamp(),error_code=NULL WHERE id=%s',(cursor,ident))
-        return bool(rows)
+        return processed
 
 def inbox(connection,principal,delegated=None,*,before=None,limit=50,unread=False):
     owner=owner_key(principal,delegated)

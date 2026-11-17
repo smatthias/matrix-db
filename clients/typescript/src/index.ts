@@ -18,7 +18,7 @@ export interface SubsetQuery { version_id: string; variables?: string[]; slices?
 export type Json = string | number | boolean | null | Json[] | {[key:string]:Json};
 export interface Job { id: string; status: 'queued'|'running'|'completed'|'failed'|'cancelled'; cancel_requested?: boolean; work_done?: number; result?: Json; error_code?: string|null }
 export class MatrixDBError extends Error {
-  constructor(public code:string, message:string, public status=0, public requestId?:string) { super(message); this.name='MatrixDBError'; }
+  constructor(public code:string, message:string, public status=0, public requestId?:string, public retryAfter?:number) { super(message); this.name='MatrixDBError'; }
 }
 export class MatrixDBClient {
   private base:string;
@@ -44,7 +44,8 @@ export class MatrixDBClient {
         try {body=await response.json();} catch {throw new MatrixDBError('invalid_response','Invalid Matrix DB response',response.status);}
         if(!response.ok) {
           const error=(body as {error?:{code?:string;message?:string;request_id?:string}})?.error;
-          throw new MatrixDBError(error?.code??'http_error',error?.message??'Matrix DB request failed',response.status,error?.request_id);
+          const retry=response.headers.get('Retry-After')??'';
+          throw new MatrixDBError(error?.code??'http_error',error?.message??'Matrix DB request failed',response.status,error?.request_id,/^\d{1,5}$/.test(retry)?Number(retry):undefined);
         }
         return body as T;
       } catch(error) {

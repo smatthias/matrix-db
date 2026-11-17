@@ -20,7 +20,12 @@ def validate_request(operation,payload,principal):
     return request
 
 def submit(connection,operation,payload,principal):
+    with connection.transaction():return _submit(connection,operation,payload,principal)
+
+def _submit(connection,operation,payload,principal):
+    from .quotas import check_jobs,ResourceLimits
     request=validate_request(operation,payload,principal);ident=uuid4()
+    check_jobs(connection,principal.credential_id,ResourceLimits.from_environment())
     connection.execute('INSERT INTO matrix_db.api_jobs(id,subject,credential_id,operation,request,status) VALUES (%s,%s,%s,%s,%s,\'queued\')',
         (ident,principal.subject,principal.credential_id,operation,Jsonb(request.model_dump(mode='json'))))
     return {'id':str(ident),'status':'queued'}

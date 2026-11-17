@@ -1,5 +1,6 @@
 """Version-one HTTP API. Advanced mutations require an administrative credential."""
 import json
+import threading
 from contextlib import contextmanager
 from uuid import UUID,uuid4
 import numpy as np
@@ -21,7 +22,7 @@ from .alignment import AlignmentRequest,align_and_publish
 from .derived import Definition,DerivationRequest,register_definitions,derive_and_publish
 from .scenarios import Scenario,ScenarioRef,RunRequest,RunChange,OutputAttachment,ComparisonRequest,register_scenario,resolve_inputs,create_run,transition_run,attach_output,get_run,compare_and_publish
 from .storage import connect,PostgresStore,LATEST_VERSION
-from . import api_jobs,quality,administration,lifecycle,notifications
+from . import api_jobs,quality,administration,lifecycle,notifications,quotas
 
 class ObservationBatch(Contract):
     dataset_id: Identifier
@@ -57,8 +58,10 @@ def create_app(settings=None,connection_factory=connect):
     settings=Settings.from_environment() if settings is None else settings
     app=FastAPI(title='Matrix DB',version='1.0.0')
     bearer=HTTPBearer(auto_error=False)
+    slots=threading.BoundedSemaphore(settings.limits.concurrent_http_requests)
     @contextmanager
     def db():
+        quotas.admit(connection_factory,settings.limits)
         with connection_factory() as connection:
             connection.execute("SET LOCAL statement_timeout='15s'")
             yield connection
@@ -81,14 +84,28 @@ def create_app(settings=None,connection_factory=connect):
     @app.middleware('http')
     async def envelope(request,call_next):
         request_id=str(uuid4());request.state.request_id=request_id
-        size=0;parts=[]
-        async for chunk in request.stream():
-            size+=len(chunk)
-            if size>2*1024*1024:return response_error('request_too_large','request exceeds 2 MiB',413,request_id)
-            parts.append(chunk)
-        request._body=b''.join(parts)
-        response=await call_next(request);response.headers['X-Request-ID']=request_id
-        return response
+        if request.method=='GET' and request.url.path=='/health/live':
+            response=JSONResponse({'status':'live'});response.headers['X-Request-ID']=request_id;return response
+        if not slots.acquire(blocking=False):
+            response=response_error('server_busy','request execution capacity reached',503,request_id)
+            response.headers.update({'Retry-After':'1','X-Request-ID':request_id});return response
+        token=None
+        try:
+            size=0;parts=[]
+            async for chunk in request.stream():
+                size+=len(chunk)
+                if size>2*1024*1024:return response_error('request_too_large','request exceeds 2 MiB',413,request_id)
+                parts.append(chunk)
+            request._body=b''.join(parts)
+            auth=request.headers.get('Authorization','')
+            scheme,_,credential=auth.partition(' ')
+            value=settings.authenticate(credential) if scheme.lower()=='bearer' else None
+            token=quotas.current_admission.set(quotas.Admission(value.credential_id) if value else None)
+            response=await call_next(request);response.headers['X-Request-ID']=request_id
+            return response
+        finally:
+            if token is not None:quotas.current_admission.reset(token)
+            slots.release()
     @app.exception_handler(StarletteHTTPException)
     async def http_error(request,error):
         response=response_error('http_error',str(error.detail),error.status_code,request.state.request_id)
@@ -105,6 +122,11 @@ def create_app(settings=None,connection_factory=connect):
     async def internal_error(request,error):return response_error('internal_error','request could not be completed',500,getattr(request.state,'request_id',None))
     @app.exception_handler(administration.StaleEdit)
     async def stale_edit(request,error):return response_error('stale_edit','data changed; reload before saving',409,request.state.request_id)
+    @app.exception_handler(quotas.QuotaExceeded)
+    async def quota_error(request,error):
+        response=JSONResponse({'error':{'code':'quota_exceeded','message':'configured resource capacity reached','resource':error.resource,'limit':error.limit,'request_id':request.state.request_id}},status_code=429)
+        if error.retry_after is not None:response.headers['Retry-After']=str(error.retry_after)
+        return response
     @app.exception_handler(notifications.Conflict)
     async def subscription_conflict(request,error):return response_error('stale_subscription','subscription changed; reload before saving',409,request.state.request_id)
     @app.get('/v1/subscriptions')
@@ -156,7 +178,8 @@ def create_app(settings=None,connection_factory=connect):
         with db() as connection:return quality.register_policy(connection,policy,value.subject)
     @app.post('/v1/quality/{dataset_id}/evaluate')
     def quality_evaluate(dataset_id:str,value=Depends(admin)):
-        # Evaluation sets its transaction isolation before any query.
+        # Rate admission commits on a separate connection before the snapshot transaction.
+        quotas.admit(connection_factory,settings.limits)
         with connection_factory() as connection:return jsonable_encoder(quality.evaluate(connection,dataset_id))
     @app.get('/v1/quality/{dataset_id}/health')
     def quality_health(dataset_id:str,value=Depends(principal)):
@@ -169,6 +192,9 @@ def create_app(settings=None,connection_factory=connect):
     @app.post('/v1/quality/{dataset_id}/incidents/{incident_id}/acknowledge')
     def quality_acknowledge(dataset_id:str,incident_id:UUID,value=Depends(admin)):
         with db() as connection:return quality.acknowledge(connection,dataset_id,incident_id,value.subject)
+    @app.get('/v1/admin/datasets/{dataset_id}/resources')
+    def admin_resources(dataset_id:str,value=Depends(admin)):
+        with db() as connection:return quotas.report(connection,dataset_id,settings.limits)
     @app.get('/v1/admin/datasets/{dataset_id}')
     def admin_overview(dataset_id:str,value=Depends(admin)):
         with db() as connection:return jsonable_encoder(administration.overview(connection,dataset_id))

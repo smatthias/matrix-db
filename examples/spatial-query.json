@@ -1,0 +1,8 @@
+{
+  "dataset_id": "demo-weather",
+  "variable_id": "temperature",
+  "bbox": {"west": 13, "south": 52, "east": 14, "north": 53},
+  "distance": {"longitude": 13.4, "latitude": 52.5, "radius_metres": 10000},
+  "order": "nearest",
+  "limit": 20
+}

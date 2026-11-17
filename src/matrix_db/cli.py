@@ -9,7 +9,7 @@ from .catalogue import Catalogue, CatalogueEntry, TimeCoverage
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["validate", "inspect", "catalogue", "db-migrate", "db-ready", "db-seed", "db-inspect", "db-import", "db-job"])
+    parser.add_argument("command", choices=["validate", "inspect", "catalogue", "db-migrate", "db-ready", "db-seed", "db-inspect", "db-import", "db-job", "db-query"])
     parser.add_argument("path", type=Path, nargs="?")
     parser.add_argument('--variable')
     parser.add_argument('--provider')
@@ -54,6 +54,11 @@ def main():
                     job_id=import_file(connection,args.dataset,args.path,format=args.format,
                         batch_size=args.batch_size,job_id=args.job_id,mapping=mapping)
                     print(json.dumps(job_report(connection,job_id),default=str,indent=2))
+                elif args.command == 'db-query':
+                    from .queries import ObservationQuery
+                    if args.path is None: raise ValueError('db-query requires a query JSON file')
+                    query=ObservationQuery.model_validate_json(args.path.read_text(encoding='utf-8'))
+                    print(PostgresStore(connection).query_observations(query).model_dump_json(indent=2))
                 elif args.command == 'db-job':
                     from .ingestion import job_report
                     if args.path is None: raise ValueError('db-job requires a job ID')

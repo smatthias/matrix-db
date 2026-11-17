@@ -96,3 +96,21 @@ Each committed batch updates its job checkpoint and counts atomically. Identical
 A failed job retains committed batches and reports its ID. Resume requires the same file bytes, mapping, format, dataset ID and definition; it rereads the source and skips committed record numbers. This trades extra I/O for bounded-memory replay. Dataset changes during ingestion stop the job. Sources should be immutable snapshots: checksums detect changed files but cannot undo batches already committed before a modification is detected. A malformed JSON-array stream fails the job; malformed JSON Lines records can be rejected individually. The CLI returns success for a completed job even if some records were rejected: inspect the counters and rejection report. Reports include at most 1,000 rejection reasons and identify truncation; full reasons remain in the database.
 
 Batch size is limited to 1–10,000 records. Memory scales with batch size and the largest record, not the whole file; no per-record size limit is enforced yet. Ingestion is synchronous, without a scheduler or worker leasing. Historical corrections, revision policies and background scheduling remain later work.
+
+## Step 5: spatial observation queries
+
+```sh
+matrix-db db-migrate
+matrix-db db-query examples/spatial-query.json
+```
+
+The query file accepts `dataset_id`, `variable_id`, `bbox`, a GeoJSON `polygon`, `distance`, `time`, `vertical`, `order`, `limit` and `cursor`. All supplied filters combine with AND. `PostgresStore.query_observations(ObservationQuery(...))` exposes the same interface programmatically. Unknown datasets or unmatched filters return an empty page.
+
+- Bounding boxes use longitude/latitude degrees and inclusive boundaries. West greater than east crosses the antimeridian; the query splits that region into two indexed envelopes. Numeric longitude signs are preserved at ±180.
+- Polygons and MultiPolygons use WGS84 longitude/latitude positions and include points on exterior or hole boundaries. Holes exclude their interiors. Closed rings, bounds and structure are checked before SQL; PostGIS rejects invalid topology. Regions use planar edges in EPSG:4326. Split crossing polygons into a MultiPolygon at the antimeridian rather than using edges spanning more than 180 degrees. Input is capped at 10,000 vertices; empty polygons and extra CRS properties are rejected.
+- `distance` requires `longitude`, `latitude` and `radius_metres` (0–20,040,000). Radius filtering and reported distances use WGS84 spheroidal geography calculations in metres and a matching geography GiST index. `order: "nearest"` requires a radius, so nearest searches always have an explicit maximum range. Results are observations, not one result per sensor or dataset.
+- `time` has timezone-aware `start`/`end`, both inclusive. `vertical` has `minimum`, `maximum`, `reference`, `positive` and optional `unit: "m"`; missing vertical data and different references/directions do not match. No implicit vertical transformation is performed.
+- Pages default to 100 observations, with a strict maximum of 1,000. Each item contains its observation and distance (null without a distance filter). Ordering is `(valid_time, dataset_id, id)`, preceded by distance for nearest searches. The opaque `next_cursor` resumes after the last result and is bound to filters/order; page size may change. Cursors are validated and parameterized, not an authorization mechanism.
+- Pagination is consistent for unchanged data. Concurrent inserts before a cursor are not revisited; a frozen cross-page snapshot requires later historical-version work. Query execution time and total sort work are not yet budgeted; the result limit bounds returned records, not all database work.
+
+Migration 4 adds the geography expression index alongside the existing geometry and time indexes. Integration tests cover boundary points, holes, invalid geometry, antimeridian boxes/MultiPolygons, metre distances, zero-radius queries, combined filters, vertical references, tied pagination and index eligibility. Small fixtures disable sequential scans for index-eligibility checks; this does not claim a production performance benchmark. Step 6 adds full temporal querying and historical revisions.

@@ -22,6 +22,9 @@ class StorageTest(unittest.TestCase):
         self.bundle=Bundle.model_validate_json(FIXTURE.read_text())
         self.entry=CatalogueEntry(dataset=self.bundle.dataset,source_id='synthetic-weather')
 
+    def tearDown(self):
+        self.connection.execute('DROP SCHEMA IF EXISTS matrix_db CASCADE')
+
     def test_upgrade_and_idempotency(self):
         self.connection.execute('DROP SCHEMA matrix_db CASCADE')
         migrate(self.connection,target=1)

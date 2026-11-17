@@ -45,3 +45,12 @@ jobs:
       - run: matrix-db db-ready
       - run: matrix-db db-seed examples/weather.json
       - run: matrix-db db-inspect demo-weather
+      - run: docker restart ${{ job.services.db.id }}
+      - name: Wait for restarted database
+        run: |
+          for attempt in $(seq 1 30); do
+            if matrix-db db-ready; then exit 0; fi
+            sleep 1
+          done
+          exit 1
+      - run: matrix-db db-inspect demo-weather

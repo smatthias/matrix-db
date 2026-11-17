@@ -7,7 +7,7 @@ from psycopg.types.json import Jsonb
 from .catalogue import Catalogue, CatalogueEntry
 from .contracts import Observation
 
-LATEST_VERSION = 9
+LATEST_VERSION = 10
 
 
 def connect():

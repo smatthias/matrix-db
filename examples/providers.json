@@ -1,0 +1,186 @@
+[
+  {
+    "id": "usgs-berlin",
+    "provider": "usgs",
+    "start_at": "2026-11-16T00:00:00Z",
+    "interval_seconds": 300,
+    "overlap_seconds": 3600,
+    "window_days": 2,
+    "entry": {
+      "source_id": "usgs-berlin",
+      "source_url": "https://earthquake.usgs.gov/fdsnws/event/1/",
+      "attribution": "USGS Earthquake Hazards Program",
+      "dataset": {
+        "id": "usgs-berlin",
+        "name": "USGS earthquake magnitudes near Berlin",
+        "provider": "USGS",
+        "license": "US public domain; verify third-party event contributions",
+        "source_reference": "https://earthquake.usgs.gov/",
+        "coverage": {
+          "west": 12,
+          "east": 15,
+          "south": 51,
+          "north": 54
+        },
+        "origin": "observation",
+        "variables": [
+          {
+            "id": "magnitude",
+            "quantity": "earthquake_magnitude_provider_scale",
+            "unit": "1"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": "firms-victoria",
+    "provider": "firms",
+    "start_at": "2026-11-16T00:00:00Z",
+    "interval_seconds": 600,
+    "overlap_seconds": 3600,
+    "window_days": 2,
+    "entry": {
+      "source_id": "firms-victoria",
+      "source_url": "https://firms.modaps.eosdis.nasa.gov/",
+      "attribution": "firms",
+      "dataset": {
+        "id": "firms-victoria",
+        "name": "firms-victoria",
+        "provider": "firms",
+        "license": "NASA FIRMS citation/data use terms",
+        "source_reference": "https://firms.modaps.eosdis.nasa.gov/",
+        "coverage": {
+          "west": 144,
+          "east": 146,
+          "south": -39,
+          "north": -37
+        },
+        "origin": "observation",
+        "variables": [
+          {
+            "id": "frp",
+            "quantity": "fire_radiative_power",
+            "unit": "MW"
+          }
+        ]
+      }
+    },
+    "credential_env": "MATRIX_DB_PROVIDER_FIRMS_KEY"
+  },
+  {
+    "id": "weather-berlin",
+    "provider": "open_meteo",
+    "start_at": "2026-11-01T00:00:00Z",
+    "interval_seconds": 3600,
+    "overlap_seconds": 3600,
+    "window_days": 2,
+    "entry": {
+      "source_id": "weather-berlin",
+      "source_url": "https://open-meteo.com/en/docs/historical-weather-api",
+      "attribution": "open_meteo",
+      "dataset": {
+        "id": "weather-berlin",
+        "name": "weather-berlin",
+        "provider": "open_meteo",
+        "license": "CC BY 4.0",
+        "source_reference": "https://open-meteo.com/en/docs/historical-weather-api",
+        "coverage": {
+          "west": 12,
+          "east": 15,
+          "south": 51,
+          "north": 54
+        },
+        "origin": "observation",
+        "variables": [
+          {
+            "id": "temperature",
+            "quantity": "reanalysis_air_temperature",
+            "unit": "degC"
+          },
+          {
+            "id": "humidity",
+            "quantity": "reanalysis_relative_humidity",
+            "unit": "%"
+          },
+          {
+            "id": "wind",
+            "quantity": "reanalysis_wind_speed",
+            "unit": "m/s"
+          }
+        ]
+      }
+    },
+    "latitude": 52.52,
+    "longitude": 13.41
+  },
+  {
+    "id": "vegetation-victoria",
+    "provider": "sentinel_ndvi",
+    "start_at": "2026-11-16T00:00:00Z",
+    "interval_seconds": 21600,
+    "overlap_seconds": 86400,
+    "window_days": 7,
+    "entry": {
+      "source_id": "vegetation-victoria",
+      "source_url": "https://docs.sentinel-hub.com/api/latest/api/statistical/",
+      "attribution": "sentinel_ndvi",
+      "dataset": {
+        "id": "vegetation-victoria",
+        "name": "vegetation-victoria",
+        "provider": "sentinel_ndvi",
+        "license": "Copernicus Sentinel data; Sentinel Hub service terms",
+        "source_reference": "https://docs.sentinel-hub.com/api/latest/api/statistical/",
+        "coverage": {
+          "west": 144,
+          "east": 146,
+          "south": -39,
+          "north": -37
+        },
+        "origin": "observation",
+        "variables": [
+          {
+            "id": "ndvi",
+            "quantity": "area_mean_normalized_difference_vegetation_index",
+            "unit": "1"
+          }
+        ]
+      }
+    },
+    "credential_env": "MATRIX_DB_PROVIDER_SENTINEL_TOKEN"
+  },
+  {
+    "id": "buildings-berlin",
+    "provider": "overpass",
+    "start_at": "2026-11-16T00:00:00Z",
+    "interval_seconds": 86400,
+    "overlap_seconds": 3600,
+    "window_days": 2,
+    "entry": {
+      "source_id": "buildings-berlin",
+      "source_url": "https://www.openstreetmap.org/copyright",
+      "attribution": "overpass",
+      "dataset": {
+        "id": "buildings-berlin",
+        "name": "buildings-berlin",
+        "provider": "overpass",
+        "license": "ODbL-1.0",
+        "source_reference": "https://www.openstreetmap.org/copyright",
+        "coverage": {
+          "west": 12,
+          "east": 15,
+          "south": 51,
+          "north": 54
+        },
+        "origin": "observation",
+        "variables": [
+          {
+            "id": "building_presence",
+            "quantity": "osm_building_presence",
+            "unit": "1"
+          }
+        ]
+      }
+    }
+  }
+]

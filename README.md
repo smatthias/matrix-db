@@ -320,3 +320,20 @@ The [operations guide](docs/operations.md) describes repeatable benchmarking, wo
 recovery, consistent database-plus-array backups and isolated restore qualification.
 Production load capacity, an actual backup/restore drill, full browser E2E and deployment
 remain unverified operator gates. No release tag, merge or deployment is made here.
+
+
+## Step 13 — Providers and scheduled ingestion
+
+`matrix-db-ingest` adds fixed adapters for USGS seismic events, FIRMS fire radiative
+power, Open-Meteo historical reanalysis, Sentinel Hub daily area-mean NDVI and Overpass
+building-presence snapshots. Configurable schedules use per-source locks, overlapping
+watermarks, bounded retries/backoff, explicit bounded backfill, atomic corrections and
+freshness tracking. Credential values stay in environment variables; source state and
+failure reports store no credential values or upstream exception messages.
+
+See [provider setup, semantics and limits](docs/providers.md) and
+[example source configurations](examples/providers.json). Protocol fixtures and PostGIS
+transaction tests qualify the adapters; credentialed live accounts and deployment are
+not tested. Weather forecasts, native vegetation rasters, population estimates and
+historical OSM backfill are not supplied by these adapters. Step 14 adds data-quality
+monitoring and operational alerts.

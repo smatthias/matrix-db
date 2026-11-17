@@ -13,6 +13,7 @@ dependencies = ["pydantic>=2.10,<3", "psycopg[binary]>=3.2,<4", "ijson>=3.3,<4",
 matrix-db = "matrix_db.cli:main"
 matrix-db-api = "matrix_db.api:main"
 matrix-db-worker = "matrix_db.api_jobs:main"
+matrix-db-ingest = "matrix_db.provider_ingestion:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

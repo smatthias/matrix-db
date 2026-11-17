@@ -197,7 +197,7 @@ def evict_hot(connection,version,hot,cold,actor):
         if connection.execute('SELECT 1 FROM matrix_db.retention_holds WHERE version_id=%s AND active',(version,)).fetchone():raise ValueError('version is on legal hold')
         # A separate MVCC reader proves the archive routing record was committed
         # before deleting hot bytes; an outer transaction rollback must remain readable.
-        with psycopg.connect(connection.info.dsn,connect_timeout=5) as committed:
+        with psycopg.connect(connection.info.dsn,password=connection.info.password,connect_timeout=5) as committed:
             routed=committed.execute('SELECT tier FROM matrix_db.array_locations WHERE version_id=%s',(version,)).fetchone()
             if routed is None or routed[0]!='archive':raise ValueError('commit archival before hot eviction')
         checked_files(cold/'versions'/str(version),manifest,checksum)

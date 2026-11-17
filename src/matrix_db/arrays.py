@@ -362,6 +362,7 @@ class ArrayStore:
     def unreferenced_directories(self):
         # Read-only inventory; a directory can belong to a transaction not yet committed.
         referenced={str(row[0]) for row in self.connection.execute('SELECT version_id FROM matrix_db.array_versions')}
-        return {'unreferenced_or_inflight':sorted(p.name for p in (self.root/'versions').iterdir() if p.is_dir() and p.name not in referenced),
-                'staging':sorted(p.name for p in (self.root/'.staging').iterdir() if p.is_dir()),
-                'eviction_remnants':sorted(p.name for p in (self.root/'.evicted').iterdir()) if (self.root/'.evicted').exists() else []}
+        result={'unreferenced_or_inflight':sorted(p.name for p in (self.root/'versions').iterdir() if p.is_dir() and p.name not in referenced),
+                'staging':sorted(p.name for p in (self.root/'.staging').iterdir() if p.is_dir())}
+        if (self.root/'.evicted').exists():result['eviction_remnants']=sorted(p.name for p in (self.root/'.evicted').iterdir())
+        return result

@@ -82,6 +82,10 @@ reports these remnants without deleting them. Restore stages/verifies a hot copy
 routing back to hot. It never removes the cold copy, so rollback remains safe. If a restore
 finishes before interrupted-eviction cleanup, remnants remain listed for operator review.
 
+Library lifecycle/read methods own a transaction when none is active; use an explicit
+`connection.transaction()` block when several calls must share a rollback or reader-lock
+lifetime. A connection context alone opens a transaction lazily and is not that boundary.
+
 All readers must run the lifecycle-aware code before any archival cutover. Long-lived
 read transactions can delay tiering; avoid holding them idle. A lifecycle copy can also
 make new readers wait or hit their normal SQL timeout. Prefer maintenance windows for

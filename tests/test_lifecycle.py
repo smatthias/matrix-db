@@ -83,7 +83,7 @@ class LifecycleStorageTest(unittest.TestCase):
         self.assertTrue((self.cold/'versions'/str(self.first)).exists())
         self.assertEqual(self.db.execute('SELECT count(*) FROM matrix_db.array_versions').fetchone()[0],2)
     def test_committed_routing_required_before_hot_eviction(self):
-        with self.factory() as connection:
+        with self.factory() as connection,connection.transaction():
             move_tier(connection,self.first,self.hot,self.cold,'test')
             with patch('matrix_db.lifecycle.datetime',wraps=datetime) as clock:
                 clock.now.return_value=self.future
@@ -91,7 +91,7 @@ class LifecycleStorageTest(unittest.TestCase):
         self.assertTrue((self.hot/'versions'/str(self.first)).exists())
     def test_failed_archival_database_rollback_can_retry_verified_copy(self):
         with self.assertRaises(RuntimeError):
-            with self.factory() as connection:
+            with self.factory() as connection,connection.transaction():
                 move_tier(connection,self.first,self.hot,self.cold,'test');raise RuntimeError('rollback')
         self.assertIsNone(self.db.execute('SELECT tier FROM matrix_db.array_locations WHERE version_id=%s',(self.first,)).fetchone())
         move_tier(self.db,self.first,self.hot,self.cold,'test')
@@ -103,13 +103,24 @@ class LifecycleStorageTest(unittest.TestCase):
         self.assertTrue((self.hot/'versions'/str(self.first)).exists())
         with self.assertRaises(ValueError):self.arrays.read(SubsetQuery(version_id=self.first))
     def test_shared_reader_lock_blocks_archival_and_eviction(self):
-        with self.factory() as reader:
+        with self.factory() as reader,reader.transaction():
             ArrayStore(reader,self.hot,archive_root=self.cold).read(SubsetQuery(version_id=self.first))
             with self.assertRaises(ValueError):move_tier(self.db,self.first,self.hot,self.cold,'test')
         self.apply(self.plan())
-        with self.factory() as reader:
+        with self.factory() as reader,reader.transaction():
             ArrayStore(reader,self.hot,archive_root=self.cold).manifest(self.first)
             with self.assertRaises(ValueError):self.evict(self.first)
+    def test_autocommit_read_holds_lock_while_chunks_are_loaded(self):
+        attempts=[]
+        def concurrent_archive():
+            if attempts:return
+            attempts.append(True)
+            with self.factory() as connection:
+                with self.assertRaises(ValueError):move_tier(connection,self.first,self.hot,self.cold,'test')
+        self.arrays.check_cancel=concurrent_archive
+        self.arrays.read(SubsetQuery(version_id=self.first))
+        self.assertEqual(attempts,[True])
+
     def test_crash_during_eviction_is_resumable_and_archive_stays_readable(self):
         self.apply(self.plan())
         with patch('matrix_db.lifecycle.shutil.rmtree',side_effect=OSError('interrupted')):

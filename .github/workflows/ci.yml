@@ -101,3 +101,25 @@ jobs:
           Path('/tmp/matrix-derived-query.json').write_text(json.dumps({'version_id':first['version_id']}))
           PY
           matrix-db db-array-read /tmp/matrix-derived-query.json
+      - name: Record synthetic scenario attempts and compare completed outputs
+        run: |
+          python examples/prepare-simulation.py /tmp/matrix-simulation-demo.json /tmp/matrix-comparison-request.json
+          matrix-db db-scenario-resolve examples/scenario-reference.json
+          matrix-db db-run-compare /tmp/matrix-comparison-request.json > /tmp/matrix-comparison-result.json
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import numpy as np
+          from matrix_db.arrays import ArrayStore,SubsetQuery
+          from matrix_db.storage import connect
+          result=json.loads(Path('/tmp/matrix-comparison-result.json').read_text())
+          with connect() as connection:
+              field=ArrayStore(connection,os.environ['MATRIX_DB_ARRAY_ROOT']).read(SubsetQuery(version_id=result['version_id']))
+              np.testing.assert_allclose(field['variables']['difference']['data'],2)
+          demo=json.loads(Path('/tmp/matrix-simulation-demo.json').read_text())
+          Path('/tmp/matrix-run-query.json').write_text(json.dumps({'run_id':demo['runs'][0]['run_id']}))
+          Path('/tmp/matrix-comparison-query.json').write_text(json.dumps({'version_id':result['version_id']}))
+          PY
+          matrix-db db-run-inspect /tmp/matrix-run-query.json
+          matrix-db db-array-read /tmp/matrix-comparison-query.json

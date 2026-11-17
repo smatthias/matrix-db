@@ -10,7 +10,7 @@ from .catalogue import Catalogue, CatalogueEntry, TimeCoverage
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["validate", "inspect", "catalogue", "db-migrate", "db-ready", "db-seed", "db-inspect", "db-import", "db-job", "db-query", "db-revise", "db-withdraw", "db-history", "db-series", "db-playback", "db-array-demo", "db-array-read", "db-array-inventory", "db-align", "db-derived-register", "db-derived-associate", "db-derived-run", "db-derived-inspect"])
+    parser.add_argument("command", choices=["validate", "inspect", "catalogue", "db-migrate", "db-ready", "db-seed", "db-inspect", "db-import", "db-job", "db-query", "db-revise", "db-withdraw", "db-history", "db-series", "db-playback", "db-array-demo", "db-array-read", "db-array-inventory", "db-align", "db-derived-register", "db-derived-associate", "db-derived-run", "db-derived-inspect", "db-scenario-register", "db-scenario-resolve", "db-run-create", "db-run-change", "db-run-attach", "db-run-inspect", "db-run-compare"])
     parser.add_argument("path", type=Path, nargs="?")
     parser.add_argument('--variable')
     parser.add_argument('--provider')
@@ -73,6 +73,22 @@ def main():
                     else:
                         result=playback(connection,PlaybackQuery.model_validate(payload))
                     print(json.dumps(result,default=str,indent=2))
+                elif args.command in ('db-scenario-register','db-scenario-resolve','db-run-create','db-run-change','db-run-attach','db-run-inspect','db-run-compare'):
+                    from .arrays import ArrayStore
+                    from .scenarios import Scenario,ScenarioRef,RunRequest,RunChange,OutputAttachment,ComparisonRequest,register_scenario,resolve_inputs,create_run,transition_run,attach_output,get_run,compare_and_publish
+                    if args.path is None:raise ValueError('simulation command requires a JSON request file')
+                    payload=json.loads(args.path.read_text())
+                    root=os.environ.get('MATRIX_DB_ARRAY_ROOT')
+                    if not root:raise ValueError('MATRIX_DB_ARRAY_ROOT is required')
+                    arrays=ArrayStore(connection,root)
+                    if args.command=='db-scenario-register':result=register_scenario(arrays,Scenario.model_validate(payload))
+                    elif args.command=='db-scenario-resolve':result=resolve_inputs(arrays,ScenarioRef.model_validate(payload))
+                    elif args.command=='db-run-create':result=create_run(arrays,RunRequest.model_validate(payload))
+                    elif args.command=='db-run-change':result=transition_run(arrays,RunChange.model_validate(payload))
+                    elif args.command=='db-run-attach':result=attach_output(arrays,OutputAttachment.model_validate(payload))
+                    elif args.command=='db-run-compare':result=compare_and_publish(arrays,ComparisonRequest.model_validate(payload))
+                    else:result=get_run(connection,**payload)
+                    print(json.dumps(result,default=str,allow_nan=False,indent=2))
                 elif args.command in ('db-derived-register','db-derived-associate','db-derived-run','db-derived-inspect'):
                     from .derived import Definition, DefinitionRef, Association, DerivationRequest, register_definitions, register_association, derive_and_publish, load_definitions
                     if args.path is None:raise ValueError('derived command requires a JSON request file')

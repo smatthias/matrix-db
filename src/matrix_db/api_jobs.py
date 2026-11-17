@@ -1,4 +1,4 @@
-"""Durable single-worker jobs with cooperative cancellation and atomic publication."""
+"""Durable single-worker jobs with cancellation, crash recovery and atomic publication."""
 from uuid import UUID,uuid4
 from psycopg.types.json import Jsonb
 from .queries import ObservationQuery
@@ -42,7 +42,33 @@ def cancel(connection,ident,principal):
     if row is None:raise ValueError('job is already terminal')
     return {'id':str(ident),'status':row[0],'cancel_requested':True}
 
+# A dedicated session owns this lock for the whole job, including publication.
+# The lock is deliberately global: concurrent workers skip rather than replay work.
+WORKER_LOCK = 734192012
+
+def recover_abandoned(connection):
+    """Caller must hold WORKER_LOCK; never retry potentially published operations."""
+    rows=connection.execute("""UPDATE matrix_db.api_jobs SET
+        status=CASE WHEN cancel_requested THEN 'cancelled' ELSE 'failed' END,
+        error_code=CASE WHEN cancel_requested THEN NULL ELSE 'worker_interrupted' END,
+        result=NULL,updated_at=clock_timestamp() WHERE status='running' RETURNING id""").fetchall()
+    return len(rows)
+
 def run_one(settings,connection_factory):
+    # Keep ownership on a separate session: work rollback must not release it.
+    with connection_factory() as owner:
+        if not owner.execute('SELECT pg_try_advisory_lock(%s)',(WORKER_LOCK,)).fetchone()[0]:
+            return False
+        try:
+            recover_abandoned(owner)
+            owner.commit()
+            return _run_one(settings,connection_factory,owner)
+        finally:
+            # Closing a broken session also releases the lock server-side.
+            if not owner.closed:
+                owner.execute('SELECT pg_advisory_unlock(%s)',(WORKER_LOCK,))
+
+def _run_one(settings,connection_factory,owner):
     with connection_factory() as control:
         row=control.execute('''WITH candidate AS (SELECT id FROM matrix_db.api_jobs WHERE status='queued'
             ORDER BY created_at,id FOR UPDATE SKIP LOCKED LIMIT 1)
@@ -76,6 +102,8 @@ def run_one(settings,connection_factory):
             elif operation=='derivation':result=derive_and_publish(arrays,request)
             else:result=compare_and_publish(arrays,request)
             check()
+            # A lost ownership session must roll back this job's database writes.
+            owner.execute('SELECT 1')
             updated=connection.execute('''UPDATE matrix_db.api_jobs SET status='completed',result=%s,updated_at=clock_timestamp()
                 WHERE id=%s AND status='running' AND NOT cancel_requested RETURNING id''',(Jsonb(result),ident)).fetchone()
             if updated is None:raise JobCancelled()
@@ -83,7 +111,7 @@ def run_one(settings,connection_factory):
         status='cancelled' if isinstance(error,JobCancelled) else 'failed'
         code=None if status=='cancelled' else 'authorization_revoked' if isinstance(error,PermissionError) else 'job_failed'
         with connection_factory() as control:
-            control.execute('UPDATE matrix_db.api_jobs SET status=%s,error_code=%s,updated_at=clock_timestamp() WHERE id=%s',(status,code,ident))
+            control.execute("UPDATE matrix_db.api_jobs SET status=%s,error_code=%s,updated_at=clock_timestamp() WHERE id=%s AND status='running'",(status,code,ident))
     return True
 
 def main():

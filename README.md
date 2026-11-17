@@ -291,7 +291,7 @@ Observations retain units, source references, quality, revision and recording ti
 
 Async job operations are observations, alignment, derivation and comparison. Submission validates the request and current scope before persisting it. Jobs survive API restarts; a separate worker claims queued jobs with row locking. Job inspection/cancellation checks ownership and current permissions; admin credentials can manage all jobs. Inputs are pinned by the existing query/version contracts. `work_done` counts cooperative activity checkpoints; it is **not percent complete**, and total work is unknown. Cancellation of queued jobs is immediate; running cancellation is acknowledged between chunks/calculation checkpoints or after a database operation. Worker SQL has a 30-second statement timeout. A completion/cancellation race is decided transactionally, so cancelled computations cannot commit their result references.
 
-Cancellation can leave unreferenced filesystem directories after a publication rename; inventory handles this as before. Running jobs left by an abruptly killed worker are not automatically leased/requeued in this milestone. An operator must investigate/recover those records; distributed leases/recovery are later work. API disconnects alone do not cancel persisted jobs: explicitly call the cancellation endpoint. Credentials are rechecked when a worker claims a job and when results are read; revoking a running job's credential requires cancelling it or restarting the worker for policy changes to take effect.
+Cancellation can leave unreferenced filesystem directories after a publication rename; inventory handles this as before. Step 12 adds single-worker crash reconciliation: abandoned running jobs become failed (or cancelled) without automatic replay. See the operations guide. API disconnects alone do not cancel persisted jobs: explicitly call the cancellation endpoint. Credentials are rechecked when a worker claims a job and when results are read; revoking a running job's credential requires cancelling it or restarting the worker for policy changes to take effect.
 
 The Python `MatrixDBClient` uses bounded timeouts, structured errors, paginated observation iteration, and retries only declared read-only requests. Mutation calls are never automatically replayed. It exposes catalogue/query/subset/series/playback, scenario/run/output and job operations:
 
@@ -304,4 +304,19 @@ with MatrixDBClient('http://127.0.0.1:8000', service_token) as client:
 
 The TypeScript client is in `clients/typescript` (`npm ci && npm test`). It provides typed observation/subset models, cursor iteration, AbortSignal support, timeouts and the same no-mutation-retry rule. Advanced structured payloads remain JSON-shaped and follow OpenAPI schemas. TypeScript build output and node_modules are excluded from the repository. Clients reject URLs with embedded credentials and do not follow redirects carrying authorization headers.
 
-A GeoSentinel integration uses its authenticated backend as a read-only gateway: server-side credentials, dataset discovery, observation GeoJSON, location playback inspection, time-series buckets and array subsets. The explorer workflow uses persisted data; it does not fetch live providers or substitute synthetic observations on error. API and gateway changes require deployment/configuration before users can access a live connected service. Raster tile delivery, OAuth/project permissions, high-throughput catalogue queries and worker lease recovery remain later milestones. Step 12 is performance, recovery and release qualification.
+A GeoSentinel integration uses its authenticated backend as a read-only gateway: server-side credentials, dataset discovery, observation GeoJSON, location playback inspection, time-series buckets and array subsets. The explorer workflow uses persisted data; it does not fetch live providers or substitute synthetic observations on error. API and gateway changes require deployment/configuration before users can access a live connected service. Raster tile delivery, OAuth/project permissions, high-throughput catalogue queries and distributed worker leases remain later milestones.
+
+
+## Step 12 — Performance, recovery and release qualification
+
+Workers now hold a dedicated session advisory lock through execution and publication.
+Competing workers skip; the next owner marks abandoned running jobs `worker_interrupted`
+without retrying writes. Pending cancellation recovers as cancelled. Live owners are
+never timed out or stolen. This is a single-worker recovery model, not distributed leases.
+
+CI records a rollback-only synthetic 2,000-observation query baseline with timing and
+EXPLAIN/BUFFERS output, and builds wheel/sdist artifacts with clean wheel-install checks.
+The [operations guide](docs/operations.md) describes repeatable benchmarking, worker
+recovery, consistent database-plus-array backups and isolated restore qualification.
+Production load capacity, an actual backup/restore drill, full browser E2E and deployment
+remain unverified operator gates. No release tag, merge or deployment is made here.

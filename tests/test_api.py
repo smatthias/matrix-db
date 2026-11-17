@@ -170,3 +170,35 @@ class APIStorageTest(unittest.TestCase):
         self.assertEqual(result['status'],'completed',result)
         field=self.client.post('/v1/arrays/subset',headers=headers(ADMIN),json={'version_id':result['result']['version_id']}).json()
         np.testing.assert_allclose(field['variables']['temperature']['data'],283.15)
+
+    def test_worker_recovery_respects_live_owner_and_never_replays(self):
+        from matrix_db.api_jobs import WORKER_LOCK
+        ident=self.client.post('/v1/jobs',headers=headers(READER),json={'operation':'observations','payload':{'dataset_id':'weather'}}).json()['id']
+        self.connection.execute("UPDATE matrix_db.api_jobs SET status='running' WHERE id=%s",(ident,))
+        with self.factory() as live:
+            live.execute('SELECT pg_advisory_lock(%s)',(WORKER_LOCK,));live.commit()
+            self.assertFalse(run_one(self.settings,self.factory))
+            self.assertEqual(self.connection.execute('SELECT status FROM matrix_db.api_jobs WHERE id=%s',(ident,)).fetchone()[0],'running')
+        self.assertFalse(run_one(self.settings,self.factory))
+        result=self.client.get('/v1/jobs/'+ident,headers=headers(READER)).json()
+        self.assertEqual(result['status'],'failed');self.assertEqual(result['error_code'],'worker_interrupted')
+        self.assertIsNone(result['result'])
+        self.assertFalse(run_one(self.settings,self.factory))
+
+    def test_crashed_cancelled_worker_recovers_without_failure_or_replay(self):
+        ident=self.client.post('/v1/jobs',headers=headers(READER),json={'operation':'observations','payload':{'dataset_id':'weather'}}).json()['id']
+        self.connection.execute("UPDATE matrix_db.api_jobs SET status='running',cancel_requested=true WHERE id=%s",(ident,))
+        self.assertFalse(run_one(self.settings,self.factory))
+        result=self.client.get('/v1/jobs/'+ident,headers=headers(READER)).json()
+        self.assertEqual(result['status'],'cancelled');self.assertIsNone(result['error_code'])
+
+    def test_active_job_cannot_be_recovered_by_second_worker(self):
+        ident=self.client.post('/v1/jobs',headers=headers(READER),json={'operation':'observations','payload':{'dataset_id':'weather'}}).json()['id']
+        from matrix_db.queries import query_observations
+        def competing_worker(connection,query):
+            self.assertFalse(run_one(self.settings,self.factory))
+            return query_observations(connection,query)
+        with patch('matrix_db.queries.query_observations',competing_worker):
+            self.assertTrue(run_one(self.settings,self.factory))
+        result=self.client.get('/v1/jobs/'+ident,headers=headers(READER)).json()
+        self.assertEqual(result['status'],'completed')

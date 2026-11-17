@@ -130,6 +130,12 @@ jobs:
       - run: npm ci --prefix clients/typescript --ignore-scripts
       - run: npm test --prefix clients/typescript
       - run: python scripts/api_smoke.py
+      - name: Synthetic query baseline
+        run: python scripts/benchmark.py > /tmp/matrix-benchmark.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-query-baseline
+          path: /tmp/matrix-benchmark.json
   typescript:
     runs-on: ubuntu-latest
     steps:
@@ -139,3 +145,32 @@ jobs:
           node-version: '22'
       - run: npm ci --prefix clients/typescript --ignore-scripts
       - run: npm test --prefix clients/typescript
+
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install build
+      - run: python -m build
+      - name: Install and inspect built wheel
+        run: |
+          python -m venv /tmp/matrix-release
+          /tmp/matrix-release/bin/pip install dist/*.whl
+          cd /tmp
+          /tmp/matrix-release/bin/python - <<'PY'
+          from importlib.resources import files
+          from matrix_db.storage import LATEST_VERSION
+          from matrix_db.api import create_app
+          from matrix_db.api_jobs import run_one
+          migrations=list(files('matrix_db').joinpath('migrations').iterdir())
+          assert len([p for p in migrations if p.name.endswith('.sql')]) == LATEST_VERSION
+          PY
+          /tmp/matrix-release/bin/matrix-db --help
+          /tmp/matrix-release/bin/matrix-db-worker --help
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-candidate-packages
+          path: dist/*

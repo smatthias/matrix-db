@@ -125,6 +125,7 @@ def cast_output(data,mask,dtype):
     valid=data[~mask]
     if not np.isfinite(valid).all():raise ValueError('alignment produced nonfinite values')
     if dtype.kind in ('i','u'):
+        if np.any(np.abs(valid)>2**53):raise ValueError('integer output exceeds exact float64 arithmetic range')
         info=np.iinfo(dtype)
         if np.any(valid<info.min) or np.any(valid>info.max) or np.any(valid!=np.floor(valid)):
             raise ValueError('alignment cannot represent values exactly in target integer dtype')
@@ -150,6 +151,8 @@ def align_field(data,mask,source_spec,source_variable,target_spec,target_variabl
         raise ValueError('offset unit conversion is undefined for extensive totals')
     if options.spatial=='conservative' and source_spec.crs!=target_spec.crs:
         raise ValueError('conservative alignment currently requires matching CRS')
+    if options.vertical_offset_metres is not None and 'vertical' not in source_roles:
+        raise ValueError('vertical offsets require a source vertical axis')
     if 'vertical' in source_roles:
         source_vertical=source_roles['vertical'];target_vertical=target_roles['vertical']
         if source_vertical.reference!=target_vertical.reference and options.vertical_offset_metres is None:
@@ -223,7 +226,10 @@ def align_field(data,mask,source_spec,source_variable,target_spec,target_variabl
         if covered>0 and covered+1e-10>=options.minimum_coverage:
             output[destination]=value/covered if options.renormalize_missing else value
             missing[destination]=False
-    return {'data':cast_output(output,missing,target_variable.dtype),'mask':missing,'coverage':coverage,
+    converted=cast_output(output,missing,target_variable.dtype)
+    if options.categorical and np.any(converted[~missing].astype(np.float64)!=output[~missing]):
+        raise ValueError('target dtype would change category codes')
+    return {'data':converted,'mask':missing,'coverage':coverage,
             'dimensions':target_variable.dimensions,'unit':target_variable.unit}
 
 

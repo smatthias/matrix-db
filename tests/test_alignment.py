@@ -124,6 +124,14 @@ class UnitAndAlignmentTest(unittest.TestCase):
         result=calculate(np.ones((2,2)),grid(),grid(time=(0,1)),broadcast=['time'])
         np.testing.assert_allclose(result['data'],1)
 
+    def test_category_and_integer_output_precision(self):
+        with self.assertRaisesRegex(ValueError,'category codes'):
+            calculate([[16777217]*2]*2,grid(unit='1',dtype='int32'),grid(unit='1',dtype='float32'),categorical=True)
+        with self.assertRaisesRegex(ValueError,'integer output'):
+            calculate([[2**53]*2]*2,grid(unit='km',dtype='int64'),grid(unit='m',dtype='int64'))
+        with self.assertRaisesRegex(ValueError,'vertical offsets'):
+            calculate([[1,2],[3,4]],grid(),grid(),vertical_offset_metres=10)
+
     def test_reprojection_and_lossy_integer_rejection(self):
         source=grid();target=grid(x=(55659.74539663678,),y=(55660.45186542152,),crs='EPSG:3857')
         result=calculate([[0,1],[2,3]],source,target,spatial='linear')

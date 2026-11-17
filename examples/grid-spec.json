@@ -1,0 +1,114 @@
+{
+  "schema_version": 1,
+  "dataset_id": "demo-weather",
+  "previous_version": null,
+  "crs": "EPSG:4326",
+  "axes": [
+    {
+      "name": "time",
+      "kind": "time",
+      "unit": "UTC",
+      "values": [
+        "2026-11-17T08:00:00+00:00",
+        "2026-11-17T09:00:00+00:00",
+        "2026-11-17T10:00:00+00:00"
+      ],
+      "bounds": null,
+      "reference": null,
+      "positive": null
+    },
+    {
+      "name": "depth",
+      "kind": "vertical",
+      "unit": "m",
+      "values": [
+        0,
+        10
+      ],
+      "bounds": null,
+      "reference": "sea_surface",
+      "positive": "down"
+    },
+    {
+      "name": "lat",
+      "kind": "latitude",
+      "unit": "degrees_north",
+      "values": [
+        52.25,
+        52.5,
+        52.75
+      ],
+      "bounds": [
+        [
+          52.125,
+          52.375
+        ],
+        [
+          52.375,
+          52.625
+        ],
+        [
+          52.625,
+          52.875
+        ]
+      ],
+      "reference": null,
+      "positive": null
+    },
+    {
+      "name": "lon",
+      "kind": "longitude",
+      "unit": "degrees_east",
+      "values": [
+        13.1,
+        13.3,
+        13.5,
+        13.7,
+        13.9
+      ],
+      "bounds": [
+        [
+          13.0,
+          13.2
+        ],
+        [
+          13.2,
+          13.400000000000002
+        ],
+        [
+          13.399999999999999,
+          13.600000000000001
+        ],
+        [
+          13.599999999999998,
+          13.8
+        ],
+        [
+          13.8,
+          14.0
+        ]
+      ],
+      "reference": null,
+      "positive": null
+    }
+  ],
+  "variables": [
+    {
+      "id": "temperature",
+      "unit": "degC",
+      "dtype": "float32",
+      "dimensions": [
+        "time",
+        "depth",
+        "lat",
+        "lon"
+      ],
+      "chunks": [
+        2,
+        1,
+        2,
+        2
+      ]
+    }
+  ]
+}

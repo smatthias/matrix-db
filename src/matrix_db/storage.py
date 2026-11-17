@@ -7,7 +7,7 @@ from psycopg.types.json import Jsonb
 from .catalogue import Catalogue, CatalogueEntry
 from .contracts import Observation
 
-LATEST_VERSION = 5
+LATEST_VERSION = 6
 
 
 def connect():
@@ -94,9 +94,10 @@ class PostgresStore:
             old = CatalogueEntry.model_validate(row[0])
             # Existing measurements must keep their variable definitions and validation context.
             has_records = self.connection.execute('SELECT 1 FROM matrix_db.observations WHERE dataset_id=%s LIMIT 1', (dataset_id,)).fetchone()
+            has_arrays = self.connection.execute('SELECT 1 FROM matrix_db.array_versions WHERE dataset_id=%s LIMIT 1', (dataset_id,)).fetchone()
             protected = ('variables','coverage','coordinate_system','origin')
-            if has_records and any(getattr(old.dataset,k) != getattr(replacement.dataset,k) for k in protected):
-                raise ValueError('cannot change measurement contracts after observations exist')
+            if (has_records or has_arrays) and any(getattr(old.dataset,k) != getattr(replacement.dataset,k) for k in protected):
+                raise ValueError('cannot change measurement contracts after data publication')
             self.connection.execute('INSERT INTO matrix_db.sources(provider,source_id) VALUES (%s,%s) ON CONFLICT DO NOTHING',
                                     (replacement.dataset.provider,replacement.source_id))
             self.connection.execute('UPDATE matrix_db.datasets SET provider=%s,source_id=%s,entry=%s WHERE id=%s',

@@ -34,6 +34,7 @@ jobs:
     env:
       MATRIX_DB_TEST_DATABASE_URL: postgresql://matrix:ci-only-disposable@localhost:5432/matrix_test
       MATRIX_DB_DATABASE_URL: postgresql://matrix:ci-only-disposable@localhost:5432/matrix_test
+      MATRIX_DB_ARRAY_ROOT: /tmp/matrix-db-arrays
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -60,3 +61,15 @@ jobs:
       - run: matrix-db db-playback examples/playback.json
       - run: matrix-db db-revise examples/correction.json
       - run: matrix-db db-history examples/history.json
+      - name: Publish a synthetic field and read a subset
+        run: |
+          matrix-db db-array-demo examples/grid-spec.json > /tmp/matrix-array-version.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          version=json.loads(Path('/tmp/matrix-array-version.json').read_text())['version_id']
+          query={'version_id':version,'variables':['temperature'],'slices':{'time':{'start':1,'stop':2},'depth':{'start':0,'stop':1}}}
+          Path('/tmp/matrix-array-subset.json').write_text(json.dumps(query))
+          PY
+          matrix-db db-array-read /tmp/matrix-array-subset.json
+          matrix-db db-array-inventory

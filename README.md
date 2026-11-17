@@ -138,3 +138,42 @@ Forecast queries support `forecast_issue_time` for a specific run or `forecast: 
 `db-playback` requires an `at` timestamp and `tolerance_seconds` (0–604,800). It selects the closest sample within the inclusive tolerance at the exact point/vertical level. Equal temporal distances prefer the earlier valid time, then stable identity. No match returns null; no interpolation or silent carry-forward occurs. The signed offset in seconds makes stale/future sampling explicit. Historical and forecast selections also apply.
 
 Series and playback are computed in SQL and bound their output, not total execution work. Exact coordinates currently identify a series; stable sensor/entity IDs and interpolation are later extensions. An as-of selection is included in cursor fingerprints. Catalogue metadata is not yet revisioned: the observation ledger preserves measurements while current variable contracts remain protected from changes after observations exist. Correcting valid times/locations can change current data coverage; ingestion coverage envelopes are not automatically recomputed by revision commands yet.
+
+## Step 7: chunked multidimensional fields
+
+Migration 6 adds immutable `array_versions` with dataset references, predecessor links, publication times and checksummed manifests. Chunks live separately in a configured POSIX filesystem; PostgreSQL holds metadata and references, not the numerical payloads. This initial native format uses one losslessly compressed NPZ file per chunk, with numeric data and a separate boolean missing mask. It is not yet a Zarr/NetCDF interface.
+
+```sh
+export MATRIX_DB_ARRAY_ROOT='./array-data'
+matrix-db db-migrate
+matrix-db db-array-demo examples/grid-spec.json
+# Copy the returned version UUID into a subset query JSON file.
+matrix-db db-array-read subset.json
+matrix-db db-array-inventory
+```
+
+The demo requires the registered `demo-weather` dataset. It generates synthetic values chunk by chunk; it is not an external-data importer. A subset request looks like:
+
+```json
+{
+  "version_id": "REPLACE_WITH_PUBLISHED_UUID",
+  "variables": ["temperature"],
+  "slices": {"time": {"start": 1, "stop": 2}},
+  "ranges": {
+    "depth": {"minimum": 10, "maximum": 10},
+    "lat": {"minimum": 52.5, "maximum": 52.75}
+  }
+}
+```
+
+Index slices use [start,stop). Coordinate windows include cell centres at both endpoints; they do not select cells solely because their bounds overlap a region. Time windows require timezone-aware strings and normalize to UTC. Numeric windows use the axis's declared units. A longitude minimum greater than its maximum selects both sides of the antimeridian, preserving native axis order. Unknown axes, out-of-bounds index slices and ambiguous index/range selections are rejected. Empty selections return empty arrays and read no chunks. Variables without a selected dimension are unaffected by that dimension's selection.
+
+Grid definitions support regular **EPSG:4326 longitude/latitude** and **EPSG:3857 x/y** axes, either ascending or descending. Horizontal spacing is checked; explicit cell bounds or inferred half-step bounds describe each cell. Singleton horizontal axes require explicit bounds. Time coordinates are unique and increasing. Vertical axes require metres, reference and positive direction. Each variable declares its own dimension order, exact numeric dtype, units and chunk shape. Units, integer types, finite nonmissing values and valid ranges must agree with registered variables. Projected grid coordinates remain in their declared CRS: no reprojection is performed, and registration's geographic coverage is not automatically derived from projected bounds.
+
+Programmatic publication uses `ArrayStore.publish(spec, read_chunk)`. The callback receives a variable ID and tuple of index slices and returns `(data, missing_mask)` of exactly the requested shape. Supported data dtypes are float32/float64/int16/int32/int64/uint8; the mask must be boolean and true means missing. Masked payload bits, including NaN, are preserved; nonmissing NaN/infinity is rejected. The publisher never asks for more than one chunk at a time. The provider remains responsible for avoiding full-dataset allocation. `ArrayStore.read(SubsetQuery(...))` returns typed ndarrays, masks, selected axes, dimension order, units and the number of chunks opened; the CLI renders missing values as JSON null alongside masks.
+
+Publication stages files, syncs them, verifies checksums, renames the complete directory and only then commits its immutable PostgreSQL reference. Missing or corrupted published files fail reads rather than silently filling values. Readers verify manifest and selected-chunk checksums and disable NumPy pickle loading. New versions receive UUIDs and may reference a predecessor from the same dataset; published versions cannot be edited through SQL updates/deletes. Dataset measurement definitions are protected after observations or array versions exist.
+
+A failed provider cleans its own staging directory without exposing a version. A crash or outer-transaction rollback after the rename can leave unreferenced files, which `db-array-inventory` lists without deleting anything. Listed directories may belong to in-flight transactions: automatic reclamation, grace periods and crash recovery workers are later work. PostgreSQL backups must be paired with the chunk directory. All readers/writers must use the same durable storage root; changing the root does not relocate data. Publication assumes a single POSIX filesystem with atomic directory rename/fsync; object storage and distributed locking are not implemented.
+
+Uncompressed data plus masks are capped at 64 MiB per chunk and per returned subset. This bounds payload allocations, not total process RSS or serialization overhead. Axis metadata is capped at 100,000 coordinates per axis and manifests at 100,000 chunks per variable. Metadata is currently loaded as a whole; payload I/O visits only intersecting chunks. JSON CLI output can be large; select a small window. Step 8 adds unit conversion and dataset alignment.

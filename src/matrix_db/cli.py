@@ -1,6 +1,7 @@
 """Validate and inspect a version-one JSON dataset bundle."""
 import argparse
 import json
+import os
 import psycopg
 from pathlib import Path
 import sys
@@ -9,7 +10,7 @@ from .catalogue import Catalogue, CatalogueEntry, TimeCoverage
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["validate", "inspect", "catalogue", "db-migrate", "db-ready", "db-seed", "db-inspect", "db-import", "db-job", "db-query", "db-revise", "db-withdraw", "db-history", "db-series", "db-playback"])
+    parser.add_argument("command", choices=["validate", "inspect", "catalogue", "db-migrate", "db-ready", "db-seed", "db-inspect", "db-import", "db-job", "db-query", "db-revise", "db-withdraw", "db-history", "db-series", "db-playback", "db-array-demo", "db-array-read", "db-array-inventory"])
     parser.add_argument("path", type=Path, nargs="?")
     parser.add_argument('--variable')
     parser.add_argument('--provider')
@@ -72,6 +73,32 @@ def main():
                     else:
                         result=playback(connection,PlaybackQuery.model_validate(payload))
                     print(json.dumps(result,default=str,indent=2))
+                elif args.command in ('db-array-demo','db-array-read','db-array-inventory'):
+                    import numpy as np
+                    from .arrays import ArrayStore, GridSpec, SubsetQuery
+                    root=os.environ.get('MATRIX_DB_ARRAY_ROOT')
+                    if not root:raise ValueError('MATRIX_DB_ARRAY_ROOT is required')
+                    arrays=ArrayStore(connection,root)
+                    if args.command == 'db-array-inventory':
+                        result=arrays.unreferenced_directories()
+                    elif args.command == 'db-array-demo':
+                        if args.path is None:raise ValueError('db-array-demo requires a grid specification')
+                        spec=GridSpec.model_validate_json(args.path.read_text())
+                        def synthetic(variable_id,slices):
+                            variable=next(v for v in spec.variables if v.id==variable_id)
+                            coordinates=np.meshgrid(*[np.arange(s.start,s.stop) for s in slices],indexing='ij')
+                            data=sum((i+1)*coordinate for i,coordinate in enumerate(coordinates)).astype(variable.dtype)
+                            mask=np.zeros(data.shape,dtype=bool)
+                            return data,mask
+                        result={'version_id':str(arrays.publish(spec,synthetic))}
+                    else:
+                        if args.path is None:raise ValueError('db-array-read requires a subset query')
+                        result=arrays.read(SubsetQuery.model_validate_json(args.path.read_text()))
+                        for variable in result['variables'].values():
+                            values=variable['data'].astype(object)
+                            values[variable['mask']]=None
+                            variable['data']=values.tolist();variable['mask']=variable['mask'].tolist()
+                    print(json.dumps(result,allow_nan=False,indent=2))
                 elif args.command == 'db-query':
                     from .queries import ObservationQuery
                     if args.path is None: raise ValueError('db-query requires a query JSON file')

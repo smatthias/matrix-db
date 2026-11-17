@@ -62,7 +62,7 @@ class APIContractTest(unittest.TestCase):
         with MatrixDBClient('https://matrix.invalid',READER,transport=httpx.MockTransport(handler)) as client:
             self.assertEqual(list(client.pages({'dataset_id':'weather'}))[0]['items'],[])
         self.assertEqual(len(calls),2)
-        with MatrixDBClient('https://matrix.invalid',READER) as client:
+        with MatrixDBClient('https://matrix.invalid',READER,transport=httpx.MockTransport(lambda request:httpx.Response(200,json={}))) as client:
             with self.assertRaises(ValueError):client.request('GET','https://untrusted.invalid')
         calls=[]
         def failed(request):calls.append(request);raise httpx.ReadTimeout('private connection details')

@@ -17,7 +17,8 @@ UTC=timezone.utc
 MAX_BYTES=8*1024*1024
 MAX_RECORDS=10000
 class ProviderError(Exception):
-    def __init__(self,code):self.code=code;super().__init__(code)
+    def __init__(self,code,retry_after=0):
+        self.code=code;self.retry_after=retry_after;super().__init__(code)
 
 class SourceConfig(Contract):
     id: Identifier
@@ -78,7 +79,7 @@ class Transport:
                             try:delay=max(0,(parsedate_to_datetime(retry)-datetime.now(UTC)).total_seconds())
                             except (ValueError,TypeError):pass
                         # Never retry earlier than a long upstream Retry-After: defer the poll.
-                        if delay>30:raise ProviderError('upstream_rate_limited')
+                        if delay>30:raise ProviderError('upstream_rate_limited',retry_after=min(delay,2592000))
                         self.sleep(max(1,delay));continue
                     if response.status_code==204 and allow_empty:return None
                     if response.status_code in (401,403):raise ProviderError('upstream_unauthorized')

@@ -148,6 +148,13 @@ class SchedulerTest(unittest.TestCase):
         self.assertEqual(source_state(self.db,self.source.id)['watermark'],previous)
         self.assertEqual(self.poll(NOW+timedelta(seconds=62))['status'],'not_due')
         self.assertEqual(len(PostgresStore(self.db).observations('data-usgs')),1)
+    def test_long_retry_after_is_persisted_without_early_retry(self):
+        with patch('matrix_db.provider_ingestion.fetch_records',side_effect=ProviderError('upstream_rate_limited',retry_after=900)):
+            self.assertEqual(self.poll()['status'],'failed')
+        state=source_state(self.db,self.source.id)
+        self.assertEqual(state['next_attempt_at'],NOW+timedelta(seconds=900))
+        self.assertEqual(self.poll(NOW+timedelta(seconds=61))['status'],'not_due')
+
     def test_mid_write_failure_rolls_back_and_retries_without_duplicates(self):
         from matrix_db.provider_ingestion import apply_records
         def interrupted(*args):apply_records(*args);raise RuntimeError('interrupted')

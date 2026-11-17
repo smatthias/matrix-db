@@ -98,7 +98,7 @@ truncation or fabricated fallback. Split dense areas/windows if limits are reach
 
 HTTP reads have a 30-second inactivity timeout, no redirects, at most three attempts,
 and bounded exponential delay. Retry-After up to 30 seconds is honored; longer rate-limit
-responses defer the poll. Persisted failures use exponential backoff (at least the source
+responses defer the poll until that delay (capped at 30 days). Persisted failures use exponential backoff (at least the source
 interval). Authorization/schema failures also back off; operators must correct credentials
 or configuration. There is no permanent automatic disable or unbounded in-request retry.
 

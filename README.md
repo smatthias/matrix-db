@@ -337,3 +337,19 @@ transaction tests qualify the adapters; credentialed live accounts and deploymen
 not tested. Weather forecasts, native vegetation rasters, population estimates and
 historical OSM backfill are not supplied by these adapters. Step 14 adds data-quality
 monitoring and operational alerts.
+
+
+## Step 14 — Quality monitoring and operational alerts
+
+Versioned policies assess range, rate-of-change, count completeness, data freshness,
+expected-point coverage and exact-pair variable consistency. Evaluations pin observation
+revisions and preserve upstream flags. Failures create deduplicated incidents with
+acknowledgement, recovery and durable local notification events. Dataset-scoped health
+reads distinguish healthy, degraded, unknown and expired evaluations. The operator
+`matrix-db-quality` process can assess data independently of provider ingestion.
+
+See [quality semantics, API and operations](docs/quality.md) and the
+[example policy](examples/quality-policy.json). GeoSentinel displays health and local
+notifications through its authenticated read-only gateway. External delivery, array
+quality scanning, deployment and full browser E2E are not provided here. Step 15 covers
+retention, archival and storage lifecycle.

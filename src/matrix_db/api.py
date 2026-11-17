@@ -21,7 +21,7 @@ from .alignment import AlignmentRequest,align_and_publish
 from .derived import Definition,DerivationRequest,register_definitions,derive_and_publish
 from .scenarios import Scenario,ScenarioRef,RunRequest,RunChange,OutputAttachment,ComparisonRequest,register_scenario,resolve_inputs,create_run,transition_run,attach_output,get_run,compare_and_publish
 from .storage import connect,PostgresStore,LATEST_VERSION
-from . import api_jobs
+from . import api_jobs,quality
 
 class ObservationBatch(Contract):
     dataset_id: Identifier
@@ -125,6 +125,24 @@ def create_app(settings=None,connection_factory=connect):
         entries=[e for e in entries if value.permits(e.dataset.id) and (query.after is None or e.dataset.id>query.after)]
         selected=entries[:query.limit]
         return {'items':[e.model_dump(mode='json') for e in selected],'next_cursor':selected[-1].dataset.id if len(entries)>query.limit else None}
+    @app.post('/v1/quality/policies')
+    def quality_policy(policy:quality.Policy,value=Depends(admin)):
+        with db() as connection:return quality.register_policy(connection,policy,value.subject)
+    @app.post('/v1/quality/{dataset_id}/evaluate')
+    def quality_evaluate(dataset_id:str,value=Depends(admin)):
+        # Evaluation sets its transaction isolation before any query.
+        with connection_factory() as connection:return jsonable_encoder(quality.evaluate(connection,dataset_id))
+    @app.get('/v1/quality/{dataset_id}/health')
+    def quality_health(dataset_id:str,value=Depends(principal)):
+        permit(value,dataset_id)
+        with db() as connection:return jsonable_encoder(quality.health(connection,dataset_id))
+    @app.get('/v1/quality/{dataset_id}/events')
+    def quality_events(dataset_id:str,after:int=Query(0,ge=0),limit:int=Query(100,ge=1,le=1000),value=Depends(principal)):
+        permit(value,dataset_id)
+        with db() as connection:return jsonable_encoder(quality.notifications(connection,dataset_id,after,limit))
+    @app.post('/v1/quality/{dataset_id}/incidents/{incident_id}/acknowledge')
+    def quality_acknowledge(dataset_id:str,incident_id:UUID,value=Depends(admin)):
+        with db() as connection:return quality.acknowledge(connection,dataset_id,incident_id,value.subject)
     @app.get('/v1/datasets/{dataset_id}')
     def dataset(dataset_id:str,value=Depends(principal)):
         permit(value,dataset_id)

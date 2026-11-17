@@ -4,7 +4,8 @@ import hashlib
 import json
 import math
 from typing import Annotated, Literal
-from pydantic import Field, StrictInt, model_validator
+from datetime import datetime
+from pydantic import Field, StrictInt, model_validator, field_validator
 from .catalogue import TimeCoverage
 from .contracts import Contract, Coverage, Identifier, Observation
 
@@ -57,6 +58,11 @@ class ObservationQuery(Contract):
     dataset_id: Identifier | None = None
     variable_id: Identifier | None = None
     time: TimeCoverage | None = None
+    as_of: datetime | None = None
+    forecast_issue_time: datetime | None = None
+    forecast: Literal['all','latest'] = 'all'
+    _explicit_time = field_validator('as_of','forecast_issue_time', mode='before')(Observation.explicit_timestamp.__func__)
+    _utc_time = field_validator('as_of','forecast_issue_time')(Observation.utc_time.__func__)
     vertical: VerticalRange | None = None
     bbox: Coverage | None = None
     polygon: Polygon | None = None
@@ -67,6 +73,8 @@ class ObservationQuery(Contract):
 
     @model_validator(mode='after')
     def nearest_requires_radius(self):
+        if self.forecast=='latest' and self.forecast_issue_time is not None:
+            raise ValueError('select an issue time or latest forecast, not both')
         if self.order=='nearest' and self.distance is None:
             raise ValueError('nearest ordering requires a distance filter with maximum radius')
         return self
@@ -74,6 +82,8 @@ class ObservationQuery(Contract):
 class Match(Contract):
     observation: Observation
     distance_metres: float | None = None
+    revision: int
+    recorded_at: datetime
 
 class Page(Contract):
     items: list[Match]
@@ -105,10 +115,39 @@ def decode_cursor(query):
         raise ValueError('invalid cursor or cursor does not match query') from error
 
 
-def build_query(query):
+def build_query(query, *, paginate=True):
     """Return parameterized SQL; only fixed fragments are composed."""
     params={}
-    clauses=[]
+    clauses=['NOT o.is_withdrawn']
+    source='matrix_db.observations'
+    ctes=[]
+    if query.as_of is not None:
+        params['as_of']=query.as_of
+        # Select the revision before applying time/location/value filters: corrections may move them.
+        dataset_filter=' AND dataset_id=%(dataset_id)s' if query.dataset_id else ''
+        if query.dataset_id: params['dataset_id']=query.dataset_id
+        ctes.append(f'''historical AS (
+            SELECT DISTINCT ON(dataset_id,id) * FROM matrix_db.observation_revisions
+            WHERE recorded_at<=%(as_of)s {dataset_filter}
+            ORDER BY dataset_id,id,recorded_at DESC,revision DESC)''')
+        source='historical'
+    if query.forecast=='latest':
+        # Rank only non-withdrawn forecast records within the already resolved historical snapshot.
+        ctes.append(f'''forecast_candidates AS (
+            SELECT *,row_number() OVER (
+                PARTITION BY dataset_id,variable_id,valid_time,longitude,latitude,record->'vertical'
+                ORDER BY (record->>'forecast_issue_time')::timestamptz DESC,recorded_at DESC,id
+            ) AS forecast_rank FROM {source}
+            WHERE NOT is_withdrawn AND record->>'forecast_issue_time' IS NOT NULL
+            AND (record->>'forecast_issue_time')::timestamptz<=COALESCE(%(availability_time)s::timestamptz,statement_timestamp()))''')
+        params['availability_time']=query.as_of
+        source='forecast_candidates'
+        clauses.append('o.forecast_rank=1')
+    if query.as_of is not None:
+        clauses.append("(o.record->>'forecast_issue_time' IS NULL OR (o.record->>'forecast_issue_time')::timestamptz<=%(as_of)s)")
+    if query.forecast_issue_time is not None:
+        clauses.append("(o.record->>'forecast_issue_time')::timestamptz=%(issue_time)s")
+        params['issue_time']=query.forecast_issue_time
     for field,column in [('dataset_id','dataset_id'),('variable_id','variable_id')]:
         value=getattr(query,field)
         if value is not None:
@@ -140,6 +179,7 @@ def build_query(query):
         point='ST_SetSRID(ST_MakePoint(%(longitude)s,%(latitude)s),4326)::geography'
         clauses.append(f'ST_DWithin(o.location::geography,{point},%(radius)s)')
         distance_sql=f'ST_Distance(o.location::geography,{point})'
+    if not paginate and query.cursor is not None: raise ValueError('cursor is unsupported for aggregate queries')
     cursor=decode_cursor(query)
     where=' AND '.join(clauses) if clauses else 'TRUE'
     order='valid_time,dataset_id,id'
@@ -151,10 +191,12 @@ def build_query(query):
             after='(distance_metres,valid_time,dataset_id,id)>(%(last_distance)s,%(last_time)s,%(last_dataset)s,%(last_id)s)'
         else: after='(valid_time,dataset_id,id)>(%(last_time)s,%(last_dataset)s,%(last_id)s)'
     params['limit']=query.limit+1
-    sql=f'''SELECT record,distance_metres,valid_time,dataset_id,id FROM (
-        SELECT o.record,{distance_sql} AS distance_metres,o.valid_time,o.dataset_id,o.id
-        FROM matrix_db.observations o WHERE {where}
-    ) matches WHERE {after} ORDER BY {order} LIMIT %(limit)s'''
+    prefix=('WITH '+', '.join(ctes)+' ') if ctes else ''
+    limit_clause=' LIMIT %(limit)s' if paginate else ''
+    sql=prefix+f'''SELECT record,distance_metres,valid_time,dataset_id,id,revision,recorded_at FROM (
+        SELECT o.record,{distance_sql} AS distance_metres,o.valid_time,o.dataset_id,o.id,o.revision,o.recorded_at
+        FROM {source} o WHERE {where}
+    ) matches WHERE {after} ORDER BY {order}{limit_clause}'''
     return sql,params
 
 
@@ -173,5 +215,5 @@ def query_observations(connection, query: ObservationQuery):
         last=selected[-1]
         payload={'query':fingerprint(query),'distance':last[1],'time':last[2].isoformat(),'dataset':last[3],'id':last[4]}
         next_cursor=base64.urlsafe_b64encode(json.dumps(payload,separators=(',',':')).encode()).decode()
-    return Page(items=[Match(observation=Observation.model_validate(row[0]),distance_metres=row[1]) for row in selected],
+    return Page(items=[Match(observation=Observation.model_validate(row[0]),distance_metres=row[1],revision=row[5],recorded_at=row[6]) for row in selected],
                 next_cursor=next_cursor)

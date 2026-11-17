@@ -114,3 +114,27 @@ The query file accepts `dataset_id`, `variable_id`, `bbox`, a GeoJSON `polygon`,
 - Pagination is consistent for unchanged data. Concurrent inserts before a cursor are not revisited; a frozen cross-page snapshot requires later historical-version work. Query execution time and total sort work are not yet budgeted; the result limit bounds returned records, not all database work.
 
 Migration 4 adds the geography expression index alongside the existing geometry and time indexes. Integration tests cover boundary points, holes, invalid geometry, antimeridian boxes/MultiPolygons, metre distances, zero-radius queries, combined filters, vertical references, tied pagination and index eligibility. Small fixtures disable sequential scans for index-eligibility checks; this does not claim a production performance benchmark. Step 6 adds full temporal querying and historical revisions.
+
+## Step 6: historical revisions, forecasts and time series
+
+Migration 5 adds an append-only revision ledger populated by database triggers for observation inserts and updates. Initial records, corrections, restorations and withdrawals retain full values, source references, import links, reason, actor, revision number and a server recording timestamp. Existing records are backfilled at migration time; earlier knowledge is not inferred from client-supplied ingestion timestamps. The ledger rejects UPDATE/DELETE operations; database owners can still alter schema or disable triggers, so this is not a tamper-proof audit system.
+
+```sh
+matrix-db db-migrate
+matrix-db db-series examples/time-series.json
+matrix-db db-playback examples/playback.json
+matrix-db db-revise examples/correction.json
+matrix-db db-history examples/history.json
+```
+
+The correction example expects revision 1 and changes one synthetic value to 20. Repeating it fails with a revision conflict. `db-withdraw` accepts a request containing `dataset_id`, `observation_id`, `expected_revision`, `reason` and `actor`. `db-revise` uses an `observation` object instead of those identity fields. Both commands require a positive expected revision plus nonblank reason/actor; correction can explicitly restore a withdrawn record. The actor is supplied provenance, not an authenticated identity. Reads expose revision numbers and server recording times. History is newest-first, capped at 1,000 revisions per call, with `before_revision` for further pages.
+
+Add `as_of` to an observation query to select the latest revision with `recorded_at <= as_of`, then apply spatial, variable and valid-time filters. Withdrawals disappear from current results while earlier as-of views retain them. Recording time is assigned inside the write transaction, **not at commit**: as-of semantics describe ledger recording times once transactions are committed, not exact wall-clock visibility during long-running transactions. Transaction rollbacks remove both the current change and its new revision. Raw query time ranges remain inclusive at both ends.
+
+Forecast queries support `forecast_issue_time` for a specific run or `forecast: "latest"` for the latest available issue at each dataset/variable/valid-time/location/vertical coordinate. Latest mode excludes non-forecast records, orders by issue time, then recording time and ID, and respects the as-of recording cutoff and issue-time availability. A withdrawn latest record falls back to an older available issue. Latest mode and a specific issue time cannot be combined. Forecast series/playback require one of these modes to avoid silently mixing runs.
+
+`db-series` takes a dataset, variable, exact point, time interval and integer `bucket_seconds`. Optional `vertical` selects an exact level/reference; omitting it selects only unlevelled records. At most 1,000 buckets are returned. Buckets are anchored to the requested start and use **[start, end)** boundaries, with a possibly shorter final bucket. Output includes units, total record counts, nonmissing sample counts, missing flags, mean/minimum/maximum and a sample sum. Empty/all-null buckets retain null statistics. These are unweighted numeric summaries over matching records and all quality flags; a sample sum is not a time integral or a physical accumulation. `as_of` selects a historical series.
+
+`db-playback` requires an `at` timestamp and `tolerance_seconds` (0–604,800). It selects the closest sample within the inclusive tolerance at the exact point/vertical level. Equal temporal distances prefer the earlier valid time, then stable identity. No match returns null; no interpolation or silent carry-forward occurs. The signed offset in seconds makes stale/future sampling explicit. Historical and forecast selections also apply.
+
+Series and playback are computed in SQL and bound their output, not total execution work. Exact coordinates currently identify a series; stable sensor/entity IDs and interpolation are later extensions. An as-of selection is included in cursor fingerprints. Catalogue metadata is not yet revisioned: the observation ledger preserves measurements while current variable contracts remain protected from changes after observations exist. Correcting valid times/locations can change current data coverage; ingestion coverage envelopes are not automatically recomputed by revision commands yet.

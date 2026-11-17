@@ -1,0 +1,18 @@
+{
+  "observation": {
+    "id": "demo-0",
+    "dataset_id": "demo-weather",
+    "variable_id": "temperature",
+    "longitude": 13.4,
+    "latitude": 52.5,
+    "valid_time": "2026-11-17T09:00:00+01:00",
+    "ingested_at": "2026-11-17T08:05:00Z",
+    "value": 20,
+    "unit": "degC",
+    "quality": "good",
+    "source_reference": "synthetic:weather-v1"
+  },
+  "expected_revision": 1,
+  "reason": "Synthetic source correction",
+  "actor": "example-provider"
+}

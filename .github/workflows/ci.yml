@@ -56,3 +56,7 @@ jobs:
       - run: matrix-db db-inspect demo-weather
       - run: matrix-db db-import examples/weather-records.json --dataset demo-weather --format json --batch-size 1
       - run: matrix-db db-query examples/spatial-query.json
+      - run: matrix-db db-series examples/time-series.json
+      - run: matrix-db db-playback examples/playback.json
+      - run: matrix-db db-revise examples/correction.json
+      - run: matrix-db db-history examples/history.json

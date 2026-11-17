@@ -9,7 +9,7 @@ from .catalogue import Catalogue, CatalogueEntry, TimeCoverage
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["validate", "inspect", "catalogue", "db-migrate", "db-ready", "db-seed", "db-inspect", "db-import", "db-job", "db-query"])
+    parser.add_argument("command", choices=["validate", "inspect", "catalogue", "db-migrate", "db-ready", "db-seed", "db-inspect", "db-import", "db-job", "db-query", "db-revise", "db-withdraw", "db-history", "db-series", "db-playback"])
     parser.add_argument("path", type=Path, nargs="?")
     parser.add_argument('--variable')
     parser.add_argument('--provider')
@@ -54,6 +54,24 @@ def main():
                     job_id=import_file(connection,args.dataset,args.path,format=args.format,
                         batch_size=args.batch_size,job_id=args.job_id,mapping=mapping)
                     print(json.dumps(job_report(connection,job_id),default=str,indent=2))
+                elif args.command in ('db-revise','db-withdraw','db-history','db-series','db-playback'):
+                    from .temporal import RevisionRequest, WithdrawalRequest, SeriesQuery, PlaybackQuery, history, series, playback
+                    if args.path is None: raise ValueError('temporal command requires a JSON request file')
+                    payload=json.loads(args.path.read_text(encoding='utf-8'))
+                    store=PostgresStore(connection)
+                    if args.command == 'db-revise':
+                        request=RevisionRequest.model_validate(payload)
+                        result=store.revise(request.observation,expected_revision=request.expected_revision,reason=request.reason,actor=request.actor)
+                    elif args.command == 'db-withdraw':
+                        request=WithdrawalRequest.model_validate(payload)
+                        result=store.withdraw(request.dataset_id,request.observation_id,expected_revision=request.expected_revision,reason=request.reason,actor=request.actor)
+                    elif args.command == 'db-history':
+                        result=history(connection,**payload)
+                    elif args.command == 'db-series':
+                        result=series(connection,SeriesQuery.model_validate(payload))
+                    else:
+                        result=playback(connection,PlaybackQuery.model_validate(payload))
+                    print(json.dumps(result,default=str,indent=2))
                 elif args.command == 'db-query':
                     from .queries import ObservationQuery
                     if args.path is None: raise ValueError('db-query requires a query JSON file')

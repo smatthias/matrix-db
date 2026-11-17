@@ -7,7 +7,7 @@ from psycopg.types.json import Jsonb
 from .catalogue import Catalogue, CatalogueEntry
 from .contracts import Observation
 
-LATEST_VERSION = 4
+LATEST_VERSION = 5
 
 
 def connect():
@@ -121,8 +121,16 @@ class PostgresStore:
     def observations(self, dataset_id):
         # Bounded query API follows in Steps 4–6. This method is for the initial example.
         return [Observation.model_validate(row[0]) for row in self.connection.execute(
-            'SELECT record FROM matrix_db.observations WHERE dataset_id=%s ORDER BY valid_time,id', (dataset_id,)).fetchall()]
+            'SELECT record FROM matrix_db.observations WHERE dataset_id=%s AND NOT is_withdrawn ORDER BY valid_time,id', (dataset_id,)).fetchall()]
 
     def query_observations(self, query):
         from .queries import query_observations
         return query_observations(self.connection, query)
+
+    def revise(self, observation, *, expected_revision, reason, actor):
+        from .temporal import revise
+        return revise(self.connection, observation, expected_revision=expected_revision, reason=reason, actor=actor)
+
+    def withdraw(self, dataset_id, observation_id, *, expected_revision, reason, actor):
+        from .temporal import withdraw
+        return withdraw(self.connection, dataset_id, observation_id, expected_revision=expected_revision, reason=reason, actor=actor)

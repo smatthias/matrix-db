@@ -79,3 +79,20 @@ MATRIX_DB_TEST_DATABASE_URL='postgresql://matrix:YOUR_LOCAL_PASSWORD@127.0.0.1:5
 ```
 
 Create `matrix_test` separately before running. Without that variable the seven database integration tests are explicitly skipped; the PostGIS CI job sets it and runs them, followed by migrate/readiness/seed/inspect smoke commands. Local server restart verification requires Docker; reconnect persistence is covered in integration tests. Step 4 is ingestion jobs, duplicate policies and rejection reporting.
+
+## Step 4: batched ingestion
+
+`db-import` streams CSV, top-level JSON arrays, JSON Lines, and gzip-compressed variants. A registered dataset is required. JSON records follow the observation contract; CSV uses matching headers, numeric `value` conversion according to the variable, and an empty value for missing data. Optional `vertical` CSV cells contain JSON objects. `--mapping mapping.json` accepts a JSON object mapping destination contract fields to source column/property names; omitted fields use contract defaults or fail required-field validation. Units must already match; no implicit unit conversion occurs.
+
+```sh
+matrix-db db-migrate
+matrix-db db-import examples/weather-records.json --dataset demo-weather --format json --batch-size 500
+matrix-db db-job JOB_ID
+matrix-db db-import examples/weather-records.json --dataset demo-weather --format json --job-id JOB_ID
+```
+
+Each committed batch updates its job checkpoint and counts atomically. Identical observation identities and contents count as duplicates; conflicting contents are rejected rather than overwriting historical data. Invalid records produce numbered rejection reasons. Stored observations reference their first import job. Completed jobs update actual ingested time coverage and last successful ingestion metadata.
+
+A failed job retains committed batches and reports its ID. Resume requires the same file bytes, mapping, format, dataset ID and definition; it rereads the source and skips committed record numbers. This trades extra I/O for bounded-memory replay. Dataset changes during ingestion stop the job. Sources should be immutable snapshots: checksums detect changed files but cannot undo batches already committed before a modification is detected. A malformed JSON-array stream fails the job; malformed JSON Lines records can be rejected individually. The CLI returns success for a completed job even if some records were rejected: inspect the counters and rejection report. Reports include at most 1,000 rejection reasons and identify truncation; full reasons remain in the database.
+
+Batch size is limited to 1–10,000 records. Memory scales with batch size and the largest record, not the whole file; no per-record size limit is enforced yet. Ingestion is synchronous, without a scheduler or worker leasing. Historical corrections, revision policies and background scheduling remain later work.

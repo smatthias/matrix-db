@@ -9,7 +9,7 @@ from .catalogue import Catalogue, CatalogueEntry, TimeCoverage
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["validate", "inspect", "catalogue", "db-migrate", "db-ready", "db-seed", "db-inspect"])
+    parser.add_argument("command", choices=["validate", "inspect", "catalogue", "db-migrate", "db-ready", "db-seed", "db-inspect", "db-import", "db-job"])
     parser.add_argument("path", type=Path, nargs="?")
     parser.add_argument('--variable')
     parser.add_argument('--provider')
@@ -19,6 +19,11 @@ def main():
     parser.add_argument('--start')
     parser.add_argument('--end')
     parser.add_argument('--availability', choices=['declared','ingested'], default='declared')
+    parser.add_argument('--dataset')
+    parser.add_argument('--format', choices=['csv','json','jsonl'])
+    parser.add_argument('--batch-size',type=int,default=500)
+    parser.add_argument('--job-id')
+    parser.add_argument('--mapping',type=Path)
     args = parser.parse_args()
     try:
         if args.command.startswith('db-'):
@@ -41,6 +46,18 @@ def main():
                     store.register(CatalogueEntry(dataset=bundle.dataset, source_id=bundle.dataset.source_reference))
                     store.add_observations(bundle.dataset.id, bundle.observations)
                     print(f'Stored {len(bundle.observations)} observations')
+                elif args.command == 'db-import':
+                    from .ingestion import import_file, job_report
+                    if args.path is None or args.dataset is None or args.format is None:
+                        raise ValueError('db-import requires a path, --dataset and --format')
+                    mapping=json.loads(args.mapping.read_text()) if args.mapping else None
+                    job_id=import_file(connection,args.dataset,args.path,format=args.format,
+                        batch_size=args.batch_size,job_id=args.job_id,mapping=mapping)
+                    print(json.dumps(job_report(connection,job_id),default=str,indent=2))
+                elif args.command == 'db-job':
+                    from .ingestion import job_report
+                    if args.path is None: raise ValueError('db-job requires a job ID')
+                    print(json.dumps(job_report(connection,str(args.path)),default=str,indent=2))
                 else:
                     if args.path is None:
                         raise ValueError('db-inspect requires a dataset ID')

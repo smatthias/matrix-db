@@ -54,3 +54,4 @@ jobs:
           done
           exit 1
       - run: matrix-db db-inspect demo-weather
+      - run: matrix-db db-import examples/weather-records.json --dataset demo-weather --format json --batch-size 1

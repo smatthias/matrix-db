@@ -127,10 +127,10 @@ def build_query(query):
         box=query.bbox
         params.update(west=box.west,east=box.east,south=box.south,north=box.north)
         if box.west<=box.east:
-            clauses.append('ST_Intersects(o.location,ST_MakeEnvelope(%(west)s,%(south)s,%(east)s,%(north)s,4326))')
+            clauses.append('(o.location && ST_MakeEnvelope(%(west)s,%(south)s,%(east)s,%(north)s,4326))')
         else:
-            clauses.append('''(ST_Intersects(o.location,ST_MakeEnvelope(%(west)s,%(south)s,180,%(north)s,4326))
-                OR ST_Intersects(o.location,ST_MakeEnvelope(-180,%(south)s,%(east)s,%(north)s,4326)))''')
+            clauses.append('''((o.location && ST_MakeEnvelope(%(west)s,%(south)s,180,%(north)s,4326))
+                OR (o.location && ST_MakeEnvelope(-180,%(south)s,%(east)s,%(north)s,4326)))''')
     if query.polygon:
         params['polygon']=query.polygon.model_dump_json()
         clauses.append('ST_Covers(ST_SetSRID(ST_GeomFromGeoJSON(%(polygon)s),4326),o.location)')

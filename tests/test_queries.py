@@ -64,7 +64,11 @@ class SpatialTest(unittest.TestCase):
         self.assertEqual(self.ids(self.query(bbox={'west':13,'east':14,'south':52,'north':53})),['berlin','boundary'])
         self.assertEqual(self.ids(self.query(bbox={'west':170,'east':-170,'south':-1,'north':1})),['east','edge','west'])
         self.assertEqual(self.ids(self.query(bbox={'west':30,'east':31,'south':20,'north':21})),[])
-        self.assertEqual(self.ids(self.query(bbox={'west':14,'east':14,'south':53,'north':53})),['boundary'])
+        for bounds in [
+            {'west':14,'east':14,'south':53,'north':53},
+            {'west':14,'east':14,'south':52,'north':54},
+            {'west':13,'east':15,'south':53,'north':53}]:
+            self.assertEqual(self.ids(self.query(bbox=bounds)),['boundary'])
 
     def test_polygon_boundary_holes_and_invalid_geometry(self):
         polygon={'type':'Polygon','coordinates':[[[13,52],[14,52],[14,53],[13,53],[13,52]]]}

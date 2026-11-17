@@ -73,3 +73,14 @@ jobs:
           PY
           matrix-db db-array-read /tmp/matrix-array-subset.json
           matrix-db db-array-inventory
+      - name: Align units, grid and timeline and read the published result
+        run: |
+          python examples/prepare-alignment.py /tmp/matrix-array-version.json /tmp/matrix-alignment-request.json
+          matrix-db db-align /tmp/matrix-alignment-request.json > /tmp/matrix-aligned-version.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          version=json.loads(Path('/tmp/matrix-aligned-version.json').read_text())['version_id']
+          Path('/tmp/matrix-aligned-query.json').write_text(json.dumps({'version_id':version}))
+          PY
+          matrix-db db-array-read /tmp/matrix-aligned-query.json

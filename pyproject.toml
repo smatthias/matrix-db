@@ -7,7 +7,7 @@ name = "geosentinel-matrix-db"
 version = "0.1.0"
 description = "Environmental data contracts for GeoSentinel Matrix DB"
 requires-python = ">=3.11"
-dependencies = ["pydantic>=2.10,<3", "psycopg[binary]>=3.2,<4", "ijson>=3.3,<4", "numpy>=2.0,<3"]
+dependencies = ["pydantic>=2.10,<3", "psycopg[binary]>=3.2,<4", "ijson>=3.3,<4", "numpy>=2.0,<3", "pyproj>=3.6,<4"]
 
 [project.scripts]
 matrix-db = "matrix_db.cli:main"

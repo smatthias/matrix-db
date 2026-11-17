@@ -10,7 +10,7 @@ from .catalogue import Catalogue, CatalogueEntry, TimeCoverage
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["validate", "inspect", "catalogue", "db-migrate", "db-ready", "db-seed", "db-inspect", "db-import", "db-job", "db-query", "db-revise", "db-withdraw", "db-history", "db-series", "db-playback", "db-array-demo", "db-array-read", "db-array-inventory"])
+    parser.add_argument("command", choices=["validate", "inspect", "catalogue", "db-migrate", "db-ready", "db-seed", "db-inspect", "db-import", "db-job", "db-query", "db-revise", "db-withdraw", "db-history", "db-series", "db-playback", "db-array-demo", "db-array-read", "db-array-inventory", "db-align"])
     parser.add_argument("path", type=Path, nargs="?")
     parser.add_argument('--variable')
     parser.add_argument('--provider')
@@ -73,13 +73,18 @@ def main():
                     else:
                         result=playback(connection,PlaybackQuery.model_validate(payload))
                     print(json.dumps(result,default=str,indent=2))
-                elif args.command in ('db-array-demo','db-array-read','db-array-inventory'):
+                elif args.command in ('db-array-demo','db-array-read','db-array-inventory','db-align'):
                     import numpy as np
                     from .arrays import ArrayStore, GridSpec, SubsetQuery
                     root=os.environ.get('MATRIX_DB_ARRAY_ROOT')
                     if not root:raise ValueError('MATRIX_DB_ARRAY_ROOT is required')
                     arrays=ArrayStore(connection,root)
-                    if args.command == 'db-array-inventory':
+                    if args.command == 'db-align':
+                        from .alignment import AlignmentRequest, align_and_publish
+                        if args.path is None:raise ValueError('db-align requires an alignment request')
+                        request=AlignmentRequest.model_validate_json(args.path.read_text())
+                        result=align_and_publish(arrays,request)
+                    elif args.command == 'db-array-inventory':
                         result=arrays.unreferenced_directories()
                     elif args.command == 'db-array-demo':
                         if args.path is None:raise ValueError('db-array-demo requires a grid specification')
@@ -98,6 +103,7 @@ def main():
                             values=variable['data'].astype(object)
                             values[variable['mask']]=None
                             variable['data']=values.tolist();variable['mask']=variable['mask'].tolist()
+                            if variable.get('coverage') is not None:variable['coverage']=variable['coverage'].tolist()
                     print(json.dumps(result,allow_nan=False,indent=2))
                 elif args.command == 'db-query':
                     from .queries import ObservationQuery

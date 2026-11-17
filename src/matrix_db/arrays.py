@@ -159,7 +159,7 @@ class ArrayStore:
         self.root.mkdir(parents=True,exist_ok=True)
         for name in ('.staging','versions'):(self.root/name).mkdir(exist_ok=True)
 
-    def publish(self,spec:GridSpec,read_chunk):
+    def publish(self,spec:GridSpec,read_chunk,*,provenance=None):
         """Callback returns (numeric ndarray, boolean missing mask) for variable and slices."""
         spec=GridSpec.model_validate_json(spec.model_dump_json())
         with self.connection.transaction():
@@ -177,17 +177,29 @@ class ArrayStore:
         final=self.root/'versions'/str(version)
         staging.mkdir()
         manifest={'spec':spec.model_dump(mode='json'),'version_id':str(version),'chunks':[]}
+        if provenance is not None:manifest['provenance']=provenance
         try:
             axes={a.name:a for a in spec.axes}
             for variable in spec.variables:
                 shape=[len(axes[name].values) for name in variable.dimensions]
                 starts=[range(0,size,chunk) for size,chunk in zip(shape,variable.chunks)]
                 directory=staging/variable.id;directory.mkdir()
+                variable_coverage=None
                 for offset in itertools.product(*starts):
                     slices=tuple(slice(start,min(start+chunk,size)) for start,chunk,size in zip(offset,variable.chunks,shape))
                     expected=tuple(s.stop-s.start for s in slices)
-                    data,mask=read_chunk(variable.id,slices)
+                    supplied=read_chunk(variable.id,slices)
+                    if len(supplied) not in (2,3):raise ValueError('provider must return data, mask and optional coverage')
+                    data,mask=supplied[:2]
                     data=np.asarray(data);mask=np.asarray(mask)
+                    coverage=None if len(supplied)==2 else np.asarray(supplied[2],dtype=np.float64)
+                    has_coverage=coverage is not None
+                    if variable_coverage is None:variable_coverage=has_coverage
+                    if variable_coverage!=has_coverage:raise ValueError('all variable chunks must agree on coverage presence')
+                    if has_coverage and (coverage.shape!=expected or not np.isfinite(coverage).all() or np.any((coverage<0)|(coverage>1))):
+                        raise ValueError('coverage must match shape and contain fractions in [0,1]')
+                    if data.nbytes+mask.nbytes+(0 if coverage is None else coverage.nbytes)>MAX_BYTES:
+                        raise ValueError('chunk data/mask/coverage exceeds 64 MiB')
                     if data.shape!=expected or mask.shape!=expected:raise ValueError('provider returned incorrect chunk shape')
                     if data.dtype!=np.dtype(variable.dtype) or mask.dtype!=np.dtype('bool'):
                         raise ValueError('provider dtype/mask differs from declared contract')
@@ -199,10 +211,11 @@ class ArrayStore:
                     relative=f'{variable.id}/'+'.'.join(str(v) for v in offset)+'.npz'
                     path=staging/relative
                     with path.open('wb') as stream:
-                        np.savez_compressed(stream,data=data,mask=mask)
+                        extras={} if coverage is None else {'coverage':coverage}
+                        np.savez_compressed(stream,data=data,mask=mask,**extras)
                         stream.flush();os.fsync(stream.fileno())
                     manifest['chunks'].append({'variable':variable.id,'offset':list(offset),'shape':list(expected),
-                        'path':relative,'checksum':digest(path)})
+                        'path':relative,'checksum':digest(path),'coverage':has_coverage})
                 sync_dir(directory)
             for chunk in manifest['chunks']:
                 if digest(staging/chunk['path'])!=chunk['checksum']:
@@ -269,13 +282,15 @@ class ArrayStore:
                 condition=(values>=low)&(values<=high) if low<=high else (values>=low)|(values<=high)
                 indices[name]=np.flatnonzero(condition)
             else:indices[name]=np.arange(len(values))
-        size=sum(math.prod(len(indices[name]) for name in variables[v].dimensions)*(np.dtype(variables[v].dtype).itemsize+1) for v in selected)
+        coverage_variables={chunk['variable'] for chunk in manifest['chunks'] if chunk.get('coverage',False)}
+        size=sum(math.prod(len(indices[name]) for name in variables[v].dimensions)*(np.dtype(variables[v].dtype).itemsize+1+(8 if v in coverage_variables else 0)) for v in selected)
         if size>MAX_BYTES:raise ValueError('subset exceeds 64 MiB; select a smaller window')
         result={};read_count=0
         for name in selected:
             variable=variables[name]
             shape=tuple(len(indices[dimension]) for dimension in variable.dimensions)
             output=np.zeros(shape,dtype=variable.dtype);missing=np.ones(shape,dtype=bool)
+            coverage_output=np.zeros(shape,dtype=np.float64) if name in coverage_variables else None
             relevant=[chunk for chunk in manifest['chunks'] if chunk['variable']==name and
                 all(np.any((indices[dimension]>=offset)&(indices[dimension]<offset+length))
                     for dimension,offset,length in zip(variable.dimensions,chunk['offset'],chunk['shape']))]
@@ -284,6 +299,7 @@ class ArrayStore:
                 if digest(path)!=chunk['checksum']:raise ValueError('chunk checksum mismatch')
                 with np.load(path,allow_pickle=False) as archive:
                     data=archive['data'];mask=archive['mask']
+                    chunk_coverage=archive['coverage'] if chunk.get('coverage',False) else None
                 if list(data.shape)!=chunk['shape'] or mask.shape!=data.shape or data.dtype!=np.dtype(variable.dtype) or mask.dtype!=bool:
                     raise ValueError('stored chunk does not match manifest')
                 destinations=[];sources=[]
@@ -293,12 +309,16 @@ class ArrayStore:
                     destinations.append(positions);sources.append(index[positions]-offset)
                 output[np.ix_(*destinations)]=data[np.ix_(*sources)]
                 missing[np.ix_(*destinations)]=mask[np.ix_(*sources)]
+                if coverage_output is not None:
+                    if chunk_coverage is None or chunk_coverage.shape!=data.shape or not np.isfinite(chunk_coverage).all() or np.any((chunk_coverage<0)|(chunk_coverage>1)):
+                        raise ValueError('stored coverage does not match manifest')
+                    coverage_output[np.ix_(*destinations)]=chunk_coverage[np.ix_(*sources)]
                 read_count+=1
-            result[name]={'data':output,'mask':missing,'dimensions':variable.dimensions,'unit':variable.unit}
+            result[name]={'data':output,'mask':missing,'dimensions':variable.dimensions,'unit':variable.unit,'coverage':coverage_output}
         return {'version_id':str(query.version_id),'crs':spec.crs,
             'axes':{name:{**axis.model_dump(mode='json'),'values':[axis.values[int(i)] for i in indices[name]],
                 'bounds':None if axis.bounds is None else [axis.bounds[int(i)] for i in indices[name]]} for name,axis in axes.items()},
-            'variables':result,'chunks_read':read_count}
+            'variables':result,'chunks_read':read_count,'provenance':manifest.get('provenance')}
 
     def unreferenced_directories(self):
         # Read-only inventory; a directory can belong to a transaction not yet committed.

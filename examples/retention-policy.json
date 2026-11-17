@@ -1,0 +1,6 @@
+{
+  "dataset_id": "demo-weather",
+  "hot_days": 30,
+  "keep_latest": 1,
+  "keep_pinned": true
+}

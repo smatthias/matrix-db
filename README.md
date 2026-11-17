@@ -353,3 +353,20 @@ See [quality semantics, API and operations](docs/quality.md) and the
 notifications through its authenticated read-only gateway. External delivery, array
 quality scanning, deployment and full browser E2E are not provided here. Step 15 covers
 retention, archival and storage lifecycle.
+
+
+## Step 15 — Retention, archival and storage lifecycle
+
+Versioned retention policies generate reviewable plans protecting latest/recent versions,
+legal holds and explicit pins. Operator-only apply copies and verifies immutable arrays to
+an archive POSIX root, then switches read routing without changing version identities.
+Separate hot eviction rechecks protection and committed cold routing; shared reader locks
+prevent deletion during reads. Restores copy verified data back while retaining the archive.
+Audit events and interrupted-operation retries preserve reviewability and recovery.
+
+Observation revision archives are checksummed gzip copies; original append-only history,
+scenario references and quality evidence remain in PostgreSQL. No database TTL pruning,
+cold-copy deletion or staging/orphan cleanup is automatic. See
+[commands, guarantees and limits](docs/lifecycle.md) and
+[example retention policy](examples/retention-policy.json). No production lifecycle action
+was executed. Step 16 covers administration and the data explorer.

@@ -15,6 +15,7 @@ matrix-db-api = "matrix_db.api:main"
 matrix-db-worker = "matrix_db.api_jobs:main"
 matrix-db-ingest = "matrix_db.provider_ingestion:main"
 matrix-db-quality = "matrix_db.quality:main"
+matrix-db-lifecycle = "matrix_db.lifecycle:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

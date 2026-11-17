@@ -152,10 +152,15 @@ class SubsetQuery(Contract):
             raise ValueError('variable selection must be nonempty and unique')
         return self
 
+def array_lock_id(version):
+    return int.from_bytes(hashlib.sha256(('matrix-array:'+str(UUID(str(version)))).encode()).digest()[:8],'big',signed=True)
+
 class ArrayStore:
-    def __init__(self,connection,root,*,check_cancel=None):
+    def __init__(self,connection,root,*,check_cancel=None,archive_root=None):
         self.check_cancel=check_cancel or (lambda:None)
         self.connection=connection
+        cold=archive_root or os.environ.get('MATRIX_DB_ARCHIVE_ROOT')
+        self.archive_root=Path(cold).resolve() if cold else None
         self.root=Path(root).resolve()
         self.root.mkdir(parents=True,exist_ok=True)
         for name in ('.staging','versions'):(self.root/name).mkdir(exist_ok=True)
@@ -248,19 +253,36 @@ class ArrayStore:
         finally:
             if staging.exists():shutil.rmtree(staging)
 
-    def manifest(self,version_id):
+    def directory(self,version_id):
         version=UUID(str(version_id))
+        self.connection.execute('SELECT pg_advisory_xact_lock_shared(%s)',(array_lock_id(version),))
+        row=self.connection.execute('SELECT tier FROM matrix_db.array_locations WHERE version_id=%s',(version,)).fetchone()
+        if row and row[0]=='archive':
+            if self.archive_root is None:raise OSError('archive root is required for this version')
+            return self.archive_root/'versions'/str(version)
+        return self.root/'versions'/str(version)
+
+    def manifest(self,version_id):
+        with self.connection.transaction():return self._manifest(version_id)
+
+    def _manifest(self,version_id):
+        version=UUID(str(version_id))
+        directory=self.directory(version)
         row=self.connection.execute('SELECT manifest,manifest_checksum FROM matrix_db.array_versions WHERE version_id=%s',(version,)).fetchone()
         if row is None:raise KeyError(str(version))
         payload=canonical(row[0])
         if hashlib.sha256(payload.encode()).hexdigest()!=row[1]:raise ValueError('catalogue manifest checksum mismatch')
-        path=self.root/'versions'/str(version)/'manifest.json'
+        path=directory/'manifest.json'
         if digest(path)!=row[1]:raise ValueError('stored manifest checksum mismatch')
         return row[0]
 
     def read(self,query:SubsetQuery,*,max_bytes=MAX_BYTES):
+        with self.connection.transaction():return self._read(query,max_bytes=max_bytes)
+
+    def _read(self,query:SubsetQuery,*,max_bytes=MAX_BYTES):
         query=SubsetQuery.model_validate_json(query.model_dump_json())
         manifest=self.manifest(query.version_id)
+        directory=self.directory(query.version_id)
         spec=GridSpec.model_validate(manifest['spec'])
         axes={a.name:a for a in spec.axes}
         if not (set(query.slices)|set(query.ranges)).issubset(axes):raise ValueError('unknown selection axis')
@@ -307,7 +329,7 @@ class ArrayStore:
                     for dimension,offset,length in zip(variable.dimensions,chunk['offset'],chunk['shape']))]
             for chunk in relevant:
                 self.check_cancel()
-                path=self.root/'versions'/str(query.version_id)/chunk['path']
+                path=directory/chunk['path']
                 if digest(path)!=chunk['checksum']:raise ValueError('chunk checksum mismatch')
                 with np.load(path,allow_pickle=False) as archive:
                     data=archive['data'];mask=archive['mask']
@@ -341,4 +363,5 @@ class ArrayStore:
         # Read-only inventory; a directory can belong to a transaction not yet committed.
         referenced={str(row[0]) for row in self.connection.execute('SELECT version_id FROM matrix_db.array_versions')}
         return {'unreferenced_or_inflight':sorted(p.name for p in (self.root/'versions').iterdir() if p.is_dir() and p.name not in referenced),
-                'staging':sorted(p.name for p in (self.root/'.staging').iterdir() if p.is_dir())}
+                'staging':sorted(p.name for p in (self.root/'.staging').iterdir() if p.is_dir()),
+                'eviction_remnants':sorted(p.name for p in (self.root/'.evicted').iterdir()) if (self.root/'.evicted').exists() else []}

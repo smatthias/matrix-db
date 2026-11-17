@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from uuid import UUID,uuid4
 import numpy as np
 import psycopg
-from fastapi import FastAPI,Depends,HTTPException,Query
+from fastapi import FastAPI,Depends,HTTPException,Query,Header
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse,StreamingResponse
@@ -21,7 +21,7 @@ from .alignment import AlignmentRequest,align_and_publish
 from .derived import Definition,DerivationRequest,register_definitions,derive_and_publish
 from .scenarios import Scenario,ScenarioRef,RunRequest,RunChange,OutputAttachment,ComparisonRequest,register_scenario,resolve_inputs,create_run,transition_run,attach_output,get_run,compare_and_publish
 from .storage import connect,PostgresStore,LATEST_VERSION
-from . import api_jobs,quality,administration,lifecycle
+from . import api_jobs,quality,administration,lifecycle,notifications
 
 class ObservationBatch(Contract):
     dataset_id: Identifier
@@ -105,6 +105,26 @@ def create_app(settings=None,connection_factory=connect):
     async def internal_error(request,error):return response_error('internal_error','request could not be completed',500,getattr(request.state,'request_id',None))
     @app.exception_handler(administration.StaleEdit)
     async def stale_edit(request,error):return response_error('stale_edit','data changed; reload before saving',409,request.state.request_id)
+    @app.exception_handler(notifications.Conflict)
+    async def subscription_conflict(request,error):return response_error('stale_subscription','subscription changed; reload before saving',409,request.state.request_id)
+    @app.get('/v1/subscriptions')
+    def notification_subscriptions(value=Depends(principal),owner:str|None=Header(None,alias='X-Matrix-Notification-Owner')):
+        with db() as connection:return notifications.subscriptions(connection,value,owner)
+    @app.post('/v1/subscriptions',status_code=201)
+    def notification_subscribe(request:notifications.Subscription,value=Depends(principal),owner:str|None=Header(None,alias='X-Matrix-Notification-Owner')):
+        with db() as connection:return notifications.create(connection,request,value,owner)
+    @app.put('/v1/subscriptions/{ident}')
+    def notification_update(ident:UUID,request:notifications.SubscriptionChange,value=Depends(principal),owner:str|None=Header(None,alias='X-Matrix-Notification-Owner')):
+        with db() as connection:return notifications.update(connection,ident,request,value,owner)
+    @app.delete('/v1/subscriptions/{ident}')
+    def notification_delete(ident:UUID,expected_revision:int=Query(...,ge=1),value=Depends(principal),owner:str|None=Header(None,alias='X-Matrix-Notification-Owner')):
+        with db() as connection:return notifications.remove(connection,ident,expected_revision,value,owner)
+    @app.get('/v1/notifications')
+    def notification_inbox(before:int|None=Query(None,ge=1,le=9223372036854775807),limit:int=Query(50,ge=1,le=100),unread:bool=False,value=Depends(principal),owner:str|None=Header(None,alias='X-Matrix-Notification-Owner')):
+        with db() as connection:return jsonable_encoder(notifications.inbox(connection,value,owner,before=before,limit=limit,unread=unread))
+    @app.post('/v1/notifications/{ident}/read')
+    def notification_read(ident:int,value=Depends(principal),owner:str|None=Header(None,alias='X-Matrix-Notification-Owner')):
+        with db() as connection:return jsonable_encoder(notifications.mark_read(connection,ident,value,owner))
     @app.get('/health/live')
     def live():return {'status':'live'}
     @app.get('/v1/ready')

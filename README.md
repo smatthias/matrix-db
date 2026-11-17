@@ -22,7 +22,7 @@ The example contains synthetic temperature, humidity and wind observations, not 
 - Schema version 1 rejects unknown fields. IDs are nonempty stable strings.
 - Locations and coverage use EPSG:4326, longitude then latitude, in degrees. West greater than east denotes antimeridian-crossing coverage. Coverage edges are inclusive.
 - Timestamps require an explicit timezone and normalize to UTC. Valid time and ingestion time are independent. Forecasts also require an issue time no later than valid time.
-- Numeric values reject s…27 tokens truncated…iables. Integer variables require integer values.
+- Numeric values reject strings, booleans, NaN and infinities. Missing measurements use JSON null, permitted only for nullable variables. Integer variables require integer values.
 - Units must match the variable exactly; automatic conversion is outside Step 1.
 - Vertical coordinates require metres, positive direction and an explicit reference. No vertical datum transformation is performed.
 - Bundles validate dataset/variable references, location coverage, ranges, unit consistency and unique observation IDs. Cross-bundle identity and persistence are future work.
@@ -385,3 +385,17 @@ manifest axes and explicit bounded field samples. See [administration contracts 
 limits](docs/administration.md). Full browser E2E, deployment, per-human service audit
 attribution and project-level permission isolation remain unverified or unimplemented.
 Step 17 covers subscriptions and notifications.
+
+
+## Step 17 — Subscriptions and notifications
+
+Credential-owned, dataset-scoped incident subscriptions filter transitions, severity and
+rule IDs. Atomic fanout/checkpoint transactions deliver deduplicated in-app messages with
+read state, bounded paging, replay, pause/resume and versioned unsubscribe history.
+`matrix-db-notify` runs the separate durable delivery loop with bounded database retries.
+GeoSentinel uses a dedicated scoped notification gateway key and server-derived user identity
+for private subscriptions/inboxes, alongside its ordinary reader/admin keys.
+
+See [ownership, API, worker and delivery semantics](docs/notifications.md). Delivery is
+in-app only: no external email/webhook/push is sent. Full browser E2E and deployment remain
+unverified. Step 18 covers quotas and resource controls.

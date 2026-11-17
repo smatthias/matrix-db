@@ -173,3 +173,27 @@ class ArrayStorageTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'changed during staging'):
             self.arrays.publish(self.spec,corrupt_earlier_chunk)
         self.assertEqual(self.connection.execute('SELECT count(*) FROM matrix_db.array_versions').fetchone()[0],0)
+
+    def test_projected_descending_grid_and_signed_zero(self):
+        spec=GridSpec(dataset_id='demo-weather',crs='EPSG:3857',axes=[
+            Axis(name='easting',kind='x',unit='m',values=[-0.0,100]),
+            Axis(name='northing',kind='y',unit='m',values=[100,0])],variables=[
+                {'id':'temperature','unit':'degC','dtype':'float64','dimensions':['northing','easting'],'chunks':[1,1]}])
+        data=np.array([[1.,2.],[3.,4.]])
+        version=self.arrays.publish(spec,lambda variable,slices:(data[slices],np.zeros(data[slices].shape,dtype=bool)))
+        result=self.arrays.read(SubsetQuery(version_id=version,ranges={'northing':{'minimum':0,'maximum':0}}))
+        self.assertEqual(result['crs'],'EPSG:3857')
+        np.testing.assert_array_equal(result['variables']['temperature']['data'],data[1:2,:])
+        self.assertEqual(result['axes']['northing']['values'],[0])
+
+    def test_antimeridian_coordinate_window(self):
+        spec=GridSpec(dataset_id='demo-weather',axes=[
+            Axis(name='lon',kind='longitude',unit='degrees_east',values=np.arange(-179.5,180,1).tolist()),
+            Axis(name='lat',kind='latitude',unit='degrees_north',values=[-0.5,0.5])],variables=[
+                {'id':'temperature','unit':'degC','dtype':'float32','dimensions':['lat','lon'],'chunks':[1,90]}])
+        data=np.full((2,360),5,dtype='float32')
+        version=self.arrays.publish(spec,lambda variable,slices:(data[slices],np.zeros(data[slices].shape,dtype=bool)))
+        result=self.arrays.read(SubsetQuery(version_id=version,ranges={'lon':{'minimum':178,'maximum':-178}}))
+        self.assertEqual(result['axes']['lon']['values'],[-179.5,-178.5,178.5,179.5])
+        self.assertEqual(result['variables']['temperature']['data'].shape,(2,4))
+        self.assertEqual(result['chunks_read'],4)

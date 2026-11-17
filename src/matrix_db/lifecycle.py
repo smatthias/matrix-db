@@ -215,6 +215,13 @@ def evict_hot(connection,version,hot,cold,actor):
 
 
 def export_revisions(connection,dataset,before,cold,actor):
+    with connection.transaction():
+        # Ingestion/correction paths take a dataset lock too, keeping the size
+        # preflight and exported revision set consistent, even in autocommit mode.
+        connection.execute('SELECT id FROM matrix_db.datasets WHERE id=%s FOR UPDATE',(dataset,))
+        return _export_revisions(connection,dataset,before,cold,actor)
+
+def _export_revisions(connection,dataset,before,cold,actor):
     before=Observation.utc_time(before);PostgresStore(connection).get(dataset)
     connection.execute("SET LOCAL statement_timeout='30s'")
     count,size=connection.execute('''SELECT count(*),coalesce(sum(octet_length(record::text)),0) FROM

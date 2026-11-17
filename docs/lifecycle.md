@@ -115,7 +115,8 @@ matrix-db-lifecycle --verify-export ARCHIVE_UUID
 This writes a checksummed gzip JSON-lines copy containing full records, IDs, revision
 numbers, recorded times, withdrawal flags, reasons, actors and import references. Exports
 select `recorded_at < before`, never pretend data was known at its source valid time,
-and are bounded to 10,000 rows and a 64 MiB record-payload preflight. Export verification
+and are bounded to 10,000 rows and a 64 MiB record-payload preflight. A dataset
+lock keeps that preflight and the exported revision set consistent with application writes. Export verification
 checks the compressed-file checksum, JSON parsing and row count. Filesystem-first publication
 can leave an unreferenced export after a database rollback; it must not be treated as a
 catalogued archive until its database manifest exists.

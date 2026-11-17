@@ -144,6 +144,13 @@ class LifecycleStorageTest(unittest.TestCase):
         self.assertEqual(self.db.execute('SELECT count(*) FROM matrix_db.observation_revisions').fetchone()[0],3)
         path=self.cold/'revisions'/(archive['id']+'.jsonl.gz');path.write_bytes(b'corrupt')
         with self.assertRaises(ValueError):verify_revision_archive(self.db,archive['id'],self.cold)
+    def test_export_failure_rolls_back_manifest_and_audit_in_autocommit_mode(self):
+        before=datetime.now(UTC)+timedelta(days=1)
+        with patch('matrix_db.lifecycle.audit',side_effect=RuntimeError('interrupted')):
+            with self.assertRaises(RuntimeError):export_revisions(self.db,'demo-weather',before,self.cold,'test')
+        self.assertEqual(self.db.execute('SELECT count(*) FROM matrix_db.revision_archives').fetchone()[0],0)
+        self.assertEqual(self.db.execute('SELECT count(*) FROM matrix_db.observation_revisions').fetchone()[0],3)
+
     def test_missing_archive_config_and_archive_byte_budget_fail_closed(self):
         self.apply(self.plan())
         with patch.dict(os.environ,{'MATRIX_DB_ARCHIVE_ROOT':''}):

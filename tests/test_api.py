@@ -62,6 +62,8 @@ class APIContractTest(unittest.TestCase):
         with MatrixDBClient('https://matrix.invalid',READER,transport=httpx.MockTransport(handler)) as client:
             self.assertEqual(list(client.pages({'dataset_id':'weather'}))[0]['items'],[])
         self.assertEqual(len(calls),2)
+        with MatrixDBClient('https://matrix.invalid',READER) as client:
+            with self.assertRaises(ValueError):client.request('GET','https://untrusted.invalid')
         calls=[]
         def failed(request):calls.append(request);raise httpx.ReadTimeout('private connection details')
         with MatrixDBClient('https://matrix.invalid',ADMIN,transport=httpx.MockTransport(failed),read_retries=3) as client:
@@ -120,6 +122,8 @@ class APIStorageTest(unittest.TestCase):
         payload={'dataset_id':'weather','observations':[record.model_dump(mode='json')]}
         self.assertEqual(self.client.post('/v1/observations',headers=headers(READER),json=payload).status_code,403)
         self.assertEqual(self.client.post('/v1/observations',headers=headers(WRITER),json=payload).status_code,201)
+        self.assertIsNotNone(self.store.get('weather').ingested_time)
+        self.assertIsNotNone(self.store.get('weather').last_successful_ingestion)
         self.assertEqual(self.client.post('/v1/observations',headers=headers(WRITER),json=payload).status_code,409)
         result=self.client.post('/v1/arrays/subset',headers=headers(READER),json={'version_id':str(self.version)})
         self.assertEqual(result.status_code,200,result.text);self.assertIsNone(result.json()['provenance'])

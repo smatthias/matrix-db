@@ -155,7 +155,16 @@ def create_app(settings=None,connection_factory=connect):
     @app.post('/v1/observations',status_code=201)
     def ingest(batch:ObservationBatch,value=Depends(principal)):
         permit(value,batch.dataset_id,True)
-        with db() as connection:PostgresStore(connection).add_observations(batch.dataset_id,batch.observations)
+        with db() as connection:
+            from datetime import datetime,timezone
+            connection.execute('SELECT id FROM matrix_db.datasets WHERE id=%s FOR UPDATE',(batch.dataset_id,))
+            store=PostgresStore(connection)
+            store.add_observations(batch.dataset_id,batch.observations)
+            bounds=connection.execute('SELECT min(valid_time),max(valid_time) FROM matrix_db.observations WHERE dataset_id=%s AND NOT is_withdrawn',(batch.dataset_id,)).fetchone()
+            entry=store.get(batch.dataset_id)
+            if bounds[0] is not None:entry.ingested_time=TimeCoverage(start=bounds[0],end=bounds[1])
+            entry.last_successful_ingestion=datetime.now(timezone.utc)
+            store.update(batch.dataset_id,entry)
         return {'accepted':len(batch.observations)}
     @app.post('/v1/observations/query',response_model=Page)
     def observations(query:ObservationQuery,value=Depends(principal)):

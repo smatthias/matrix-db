@@ -19,6 +19,8 @@ class MatrixDBClient:
     def __enter__(self):return self
     def __exit__(self,*args):self.close()
     def request(self,method,path,payload=None,*,read_only=False,params=None):
+        location=urlparse(path)
+        if location.scheme or location.netloc:raise ValueError('relative API paths are required')
         for attempt in range(self.read_retries+1 if read_only else 1):
             try:
                 response=self.http.request(method,path.lstrip('/'),json=payload,params=params)

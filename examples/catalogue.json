@@ -1,0 +1,146 @@
+[
+  {
+    "dataset": {
+      "id": "demo-weather",
+      "name": "Synthetic Berlin weather",
+      "provider": "Matrix DB examples",
+      "license": "CC0-1.0",
+      "source_reference": "synthetic:weather-v1",
+      "coverage": {
+        "west": 13,
+        "east": 14,
+        "south": 52,
+        "north": 53
+      },
+      "origin": "observation",
+      "variables": [
+        {
+          "id": "temperature",
+          "quantity": "air_temperature",
+          "unit": "degC",
+          "minimum": -90,
+          "maximum": 60
+        },
+        {
+          "id": "humidity",
+          "quantity": "relative_humidity",
+          "unit": "%",
+          "minimum": 0,
+          "maximum": 100
+        },
+        {
+          "id": "wind",
+          "quantity": "wind_speed",
+          "unit": "m/s",
+          "minimum": 0
+        }
+      ]
+    },
+    "source_id": "demo-weather",
+    "source_url": "https://example.org/synthetic/demo-weather",
+    "attribution": "Synthetic example only",
+    "status": "active",
+    "declared_time": {
+      "start": "2026-11-01T00:00:00Z",
+      "end": "2026-11-30T00:00:00Z"
+    },
+    "ingested_time": {
+      "start": "2026-11-17T08:00:00Z",
+      "end": "2026-11-17T09:00:00Z"
+    }
+  },
+  {
+    "dataset": {
+      "id": "pacific-weather",
+      "name": "Synthetic Berlin weather",
+      "provider": "Synthetic ocean source",
+      "license": "CC0-1.0",
+      "source_reference": "synthetic:weather-v1",
+      "coverage": {
+        "west": 170,
+        "east": -170,
+        "south": -20,
+        "north": 20
+      },
+      "origin": "forecast",
+      "variables": [
+        {
+          "id": "temperature",
+          "quantity": "air_temperature",
+          "unit": "degC",
+          "minimum": -90,
+          "maximum": 60
+        },
+        {
+          "id": "humidity",
+          "quantity": "relative_humidity",
+          "unit": "%",
+          "minimum": 0,
+          "maximum": 100
+        },
+        {
+          "id": "wind",
+          "quantity": "wind_speed",
+          "unit": "m/s",
+          "minimum": 0
+        }
+      ]
+    },
+    "source_id": "pacific-weather",
+    "source_url": "https://example.org/synthetic/pacific-weather",
+    "attribution": "Synthetic example only",
+    "status": "stale",
+    "declared_time": {
+      "start": "2026-11-01T00:00:00Z",
+      "end": "2026-11-30T00:00:00Z"
+    },
+    "ingested_time": null
+  },
+  {
+    "dataset": {
+      "id": "retired-weather",
+      "name": "Synthetic Berlin weather",
+      "provider": "Matrix DB examples",
+      "license": "CC0-1.0",
+      "source_reference": "synthetic:weather-v1",
+      "coverage": {
+        "west": 13,
+        "east": 14,
+        "south": 52,
+        "north": 53
+      },
+      "origin": "observation",
+      "variables": [
+        {
+          "id": "temperature",
+          "quantity": "air_temperature",
+          "unit": "degC",
+          "minimum": -90,
+          "maximum": 60
+        },
+        {
+          "id": "humidity",
+          "quantity": "relative_humidity",
+          "unit": "%",
+          "minimum": 0,
+          "maximum": 100
+        },
+        {
+          "id": "wind",
+          "quantity": "wind_speed",
+          "unit": "m/s",
+          "minimum": 0
+        }
+      ]
+    },
+    "source_id": "retired-weather",
+    "source_url": "https://example.org/synthetic/retired-weather",
+    "attribution": "Synthetic example only",
+    "status": "retired",
+    "declared_time": {
+      "start": "2026-11-01T00:00:00Z",
+      "end": "2026-11-30T00:00:00Z"
+    },
+    "ingested_time": null
+  }
+]

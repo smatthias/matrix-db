@@ -1,0 +1,7 @@
+include README.md
+recursive-include docs *.md
+recursive-include examples *.json *.jsonl *.csv *.py
+recursive-include scripts *.py
+recursive-include clients/typescript/src *.ts
+recursive-include clients/typescript/tests *.mjs
+include clients/typescript/package.json clients/typescript/package-lock.json clients/typescript/tsconfig.json

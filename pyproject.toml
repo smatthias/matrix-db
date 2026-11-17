@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "geosentinel-matrix-db"
+version = "0.1.0"
+description = "Environmental data contracts for GeoSentinel Matrix DB"
+requires-python = ">=3.11"
+dependencies = ["pydantic>=2.10,<3", "psycopg[binary]>=3.2,<4", "ijson>=3.3,<4", "numpy>=2.0,<3", "pyproj>=3.6,<4", "fastapi>=0.121,<1", "uvicorn>=0.30,<1", "httpx>=0.27,<1"]
+
+[project.scripts]
+matrix-db = "matrix_db.cli:main"
+matrix-db-api = "matrix_db.api:main"
+matrix-db-worker = "matrix_db.api_jobs:main"
+matrix-db-ingest = "matrix_db.provider_ingestion:main"
+matrix-db-quality = "matrix_db.quality:main"
+matrix-db-lifecycle = "matrix_db.lifecycle:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+matrix_db = ["migrations/*.sql"]

@@ -1,0 +1,13 @@
+{
+  "dataset_id": "demo-weather",
+  "variable_id": "temperature",
+  "point": {
+    "longitude": 13.4,
+    "latitude": 52.5
+  },
+  "time": {
+    "start": "2026-11-17T08:00:00Z",
+    "end": "2026-11-17T10:00:00Z"
+  },
+  "bucket_seconds": 3600
+}

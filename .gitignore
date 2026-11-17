@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+build/
+dist/
+.env
+array-data/
+
+clients/typescript/node_modules/
+clients/typescript/dist/

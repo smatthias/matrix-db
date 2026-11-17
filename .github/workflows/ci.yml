@@ -1,0 +1,183 @@
+name: Contracts
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ['3.11', '3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '${{ matrix.python }}'
+      - run: python -m pip install -e .
+      - run: python -m unittest discover -s tests -v
+      - run: matrix-db validate examples/weather.json
+      - run: matrix-db catalogue examples/catalogue.json --status active --variable humidity
+      - run: matrix-db-ingest --help
+      - run: matrix-db-quality --help
+      - run: matrix-db-lifecycle --help
+      - run: python -c "from matrix_db.provider_ingestion import load_sources; assert len(load_sources('examples/providers.json')) == 5"
+  postgres:
+    runs-on: ubuntu-latest
+    services:
+      db:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_USER: matrix
+          POSTGRES_PASSWORD: ci-only-disposable
+          POSTGRES_DB: matrix_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U matrix -d matrix_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      MATRIX_DB_TEST_DATABASE_URL: postgresql://matrix:ci-only-disposable@localhost:5432/matrix_test
+      MATRIX_DB_DATABASE_URL: postgresql://matrix:ci-only-disposable@localhost:5432/matrix_test
+      MATRIX_DB_ARRAY_ROOT: /tmp/matrix-db-arrays
+      MATRIX_DB_API_KEYS: '[{"token":"matrix-ci-admin-token-not-for-production","subject":"ci","role":"admin"}]'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -e .
+      - run: python -m unittest discover -s tests -v
+      - run: matrix-db db-migrate
+      - run: matrix-db db-ready
+      - run: matrix-db db-seed examples/weather.json
+      - run: matrix-db db-inspect demo-weather
+      - run: docker restart ${{ job.services.db.id }}
+      - name: Wait for restarted database
+        run: |
+          for attempt in $(seq 1 30); do
+            if matrix-db db-ready; then exit 0; fi
+            sleep 1
+          done
+          exit 1
+      - run: matrix-db db-inspect demo-weather
+      - run: matrix-db db-import examples/weather-records.json --dataset demo-weather --format json --batch-size 1
+      - run: matrix-db db-query examples/spatial-query.json
+      - run: matrix-db db-series examples/time-series.json
+      - run: matrix-db db-playback examples/playback.json
+      - run: matrix-db db-revise examples/correction.json
+      - run: matrix-db db-history examples/history.json
+      - name: Publish a synthetic field and read a subset
+        run: |
+          matrix-db db-array-demo examples/grid-spec.json > /tmp/matrix-array-version.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          version=json.loads(Path('/tmp/matrix-array-version.json').read_text())['version_id']
+          query={'version_id':version,'variables':['temperature'],'slices':{'time':{'start':1,'stop':2},'depth':{'start':0,'stop':1}}}
+          Path('/tmp/matrix-array-subset.json').write_text(json.dumps(query))
+          PY
+          matrix-db db-array-read /tmp/matrix-array-subset.json
+          matrix-db db-array-inventory
+      - name: Align units, grid and timeline and read the published result
+        run: |
+          python examples/prepare-alignment.py /tmp/matrix-array-version.json /tmp/matrix-alignment-request.json
+          matrix-db db-align /tmp/matrix-alignment-request.json > /tmp/matrix-aligned-version.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          version=json.loads(Path('/tmp/matrix-aligned-version.json').read_text())['version_id']
+          Path('/tmp/matrix-aligned-query.json').write_text(json.dumps({'version_id':version}))
+          PY
+          matrix-db db-array-read /tmp/matrix-aligned-query.json
+      - name: Compute derived wind and verify immutable cache reuse
+        run: |
+          python examples/prepare-derivation.py /tmp/matrix-derived-request.json
+          matrix-db db-derived-register examples/derived-wind-definitions.json
+          matrix-db db-derived-inspect examples/derived-reference.json
+          matrix-db db-derived-run /tmp/matrix-derived-request.json > /tmp/matrix-derived-first.json
+          matrix-db db-derived-run /tmp/matrix-derived-request.json > /tmp/matrix-derived-second.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          first=json.loads(Path('/tmp/matrix-derived-first.json').read_text())
+          second=json.loads(Path('/tmp/matrix-derived-second.json').read_text())
+          assert not first['cache_hit'] and second['cache_hit']
+          assert first['version_id']==second['version_id']
+          Path('/tmp/matrix-derived-query.json').write_text(json.dumps({'version_id':first['version_id']}))
+          PY
+          matrix-db db-array-read /tmp/matrix-derived-query.json
+      - name: Record synthetic scenario attempts and compare completed outputs
+        run: |
+          python examples/prepare-simulation.py /tmp/matrix-simulation-demo.json /tmp/matrix-comparison-request.json
+          matrix-db db-scenario-resolve examples/scenario-reference.json
+          matrix-db db-run-compare /tmp/matrix-comparison-request.json > /tmp/matrix-comparison-result.json
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import numpy as np
+          from matrix_db.arrays import ArrayStore,SubsetQuery
+          from matrix_db.storage import connect
+          result=json.loads(Path('/tmp/matrix-comparison-result.json').read_text())
+          with connect() as connection:
+              field=ArrayStore(connection,os.environ['MATRIX_DB_ARRAY_ROOT']).read(SubsetQuery(version_id=result['version_id']))
+              np.testing.assert_allclose(field['variables']['difference']['data'],2)
+          demo=json.loads(Path('/tmp/matrix-simulation-demo.json').read_text())
+          Path('/tmp/matrix-run-query.json').write_text(json.dumps({'run_id':demo['runs'][0]['run_id']}))
+          Path('/tmp/matrix-comparison-query.json').write_text(json.dumps({'version_id':result['version_id']}))
+          PY
+          matrix-db db-run-inspect /tmp/matrix-run-query.json
+          matrix-db db-array-read /tmp/matrix-comparison-query.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --prefix clients/typescript --ignore-scripts
+      - run: npm test --prefix clients/typescript
+      - run: python scripts/api_smoke.py
+      - name: Synthetic query baseline
+        run: python scripts/benchmark.py > /tmp/matrix-benchmark.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-query-baseline
+          path: /tmp/matrix-benchmark.json
+  typescript:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --prefix clients/typescript --ignore-scripts
+      - run: npm test --prefix clients/typescript
+
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install build
+      - run: python -m build
+      - name: Install and inspect built wheel
+        run: |
+          python -m venv /tmp/matrix-release
+          /tmp/matrix-release/bin/pip install dist/*.whl
+          cd /tmp
+          /tmp/matrix-release/bin/python - <<'PY'
+          from importlib.resources import files
+          from matrix_db.storage import LATEST_VERSION
+          from matrix_db.api import create_app
+          from matrix_db.api_jobs import run_one
+          migrations=list(files('matrix_db').joinpath('migrations').iterdir())
+          assert len([p for p in migrations if p.name.endswith('.sql')]) == LATEST_VERSION
+          PY
+          /tmp/matrix-release/bin/matrix-db --help
+          /tmp/matrix-release/bin/matrix-db-worker --help
+          /tmp/matrix-release/bin/matrix-db-ingest --help
+          /tmp/matrix-release/bin/matrix-db-quality --help
+          /tmp/matrix-release/bin/matrix-db-lifecycle --help
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-candidate-packages
+          path: dist/*

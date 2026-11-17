@@ -1,0 +1,12 @@
+{
+  "dataset_id": "demo-weather",
+  "lookback_seconds": 7200,
+  "evaluation_max_age_seconds": 600,
+  "rules": [
+    {"id":"temperature-range","kind":"range","variable_id":"temperature","minimum":-50,"maximum":55,"severity":"critical"},
+    {"id":"temperature-rate","kind":"rate","variable_id":"temperature","max_rate_per_second":0.05},
+    {"id":"temperature-count","kind":"completeness","variable_id":"temperature","expected_count":2,"min_fraction":1},
+    {"id":"temperature-age","kind":"freshness","variable_id":"temperature","max_age_seconds":7200},
+    {"id":"temperature-station","kind":"coverage","variable_id":"temperature","points":[{"longitude":13.4,"latitude":52.5}],"min_fraction":1}
+  ]
+}

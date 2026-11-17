@@ -1,0 +1,10 @@
+{
+  "dataset_id": "demo-weather",
+  "variable_id": "temperature",
+  "point": {
+    "longitude": 13.4,
+    "latitude": 52.5
+  },
+  "at": "2026-11-17T08:05:00Z",
+  "tolerance_seconds": 300
+}

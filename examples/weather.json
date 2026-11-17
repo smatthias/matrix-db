@@ -1,0 +1,79 @@
+{
+  "dataset": {
+    "id": "demo-weather",
+    "name": "Synthetic Berlin weather",
+    "provider": "Matrix DB examples",
+    "license": "CC0-1.0",
+    "source_reference": "synthetic:weather-v1",
+    "coverage": {
+      "west": 13,
+      "east": 14,
+      "south": 52,
+      "north": 53
+    },
+    "origin": "observation",
+    "variables": [
+      {
+        "id": "temperature",
+        "quantity": "air_temperature",
+        "unit": "degC",
+        "minimum": -90,
+        "maximum": 60
+      },
+      {
+        "id": "humidity",
+        "quantity": "relative_humidity",
+        "unit": "%",
+        "minimum": 0,
+        "maximum": 100
+      },
+      {
+        "id": "wind",
+        "quantity": "wind_speed",
+        "unit": "m/s",
+        "minimum": 0
+      }
+    ]
+  },
+  "observations": [
+    {
+      "id": "demo-0",
+      "dataset_id": "demo-weather",
+      "variable_id": "temperature",
+      "longitude": 13.4,
+      "latitude": 52.5,
+      "valid_time": "2026-11-17T09:00:00+01:00",
+      "ingested_at": "2026-11-17T08:05:00Z",
+      "value": 15.2,
+      "unit": "degC",
+      "quality": "good",
+      "source_reference": "synthetic:weather-v1"
+    },
+    {
+      "id": "demo-1",
+      "dataset_id": "demo-weather",
+      "variable_id": "humidity",
+      "longitude": 13.4,
+      "latitude": 52.5,
+      "valid_time": "2026-11-17T09:00:00+01:00",
+      "ingested_at": "2026-11-17T08:05:00Z",
+      "value": 65,
+      "unit": "%",
+      "quality": "good",
+      "source_reference": "synthetic:weather-v1"
+    },
+    {
+      "id": "demo-2",
+      "dataset_id": "demo-weather",
+      "variable_id": "wind",
+      "longitude": 13.4,
+      "latitude": 52.5,
+      "valid_time": "2026-11-17T09:00:00+01:00",
+      "ingested_at": "2026-11-17T08:05:00Z",
+      "value": 3.5,
+      "unit": "m/s",
+      "quality": "good",
+      "source_reference": "synthetic:weather-v1"
+    }
+  ]
+}

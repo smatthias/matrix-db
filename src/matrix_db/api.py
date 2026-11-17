@@ -21,13 +21,14 @@ from .alignment import AlignmentRequest,align_and_publish
 from .derived import Definition,DerivationRequest,register_definitions,derive_and_publish
 from .scenarios import Scenario,ScenarioRef,RunRequest,RunChange,OutputAttachment,ComparisonRequest,register_scenario,resolve_inputs,create_run,transition_run,attach_output,get_run,compare_and_publish
 from .storage import connect,PostgresStore,LATEST_VERSION
-from . import api_jobs,quality
+from . import api_jobs,quality,administration,lifecycle
 
 class ObservationBatch(Contract):
     dataset_id: Identifier
     observations: list[Observation]=Field(min_length=1,max_length=10000)
 
 class CatalogueQuery(Contract):
+    text: str | None=Field(default=None,max_length=200)
     variable: str | None=None
     provider: str | None=None
     origin: str | None=None
@@ -102,6 +103,8 @@ def create_app(settings=None,connection_factory=connect):
         app.add_exception_handler(exception,handler)
     @app.exception_handler(Exception)
     async def internal_error(request,error):return response_error('internal_error','request could not be completed',500,getattr(request.state,'request_id',None))
+    @app.exception_handler(administration.StaleEdit)
+    async def stale_edit(request,error):return response_error('stale_edit','data changed; reload before saving',409,request.state.request_id)
     @app.get('/health/live')
     def live():return {'status':'live'}
     @app.get('/v1/ready')
@@ -116,13 +119,16 @@ def create_app(settings=None,connection_factory=connect):
         return catalogue(CatalogueQuery(limit=limit,after=after),value)
     @app.post('/v1/datasets/search')
     def catalogue(query:CatalogueQuery,value=Depends(principal)):
-        filters=query.model_dump(exclude={'after','limit'})
+        filters=query.model_dump(exclude={'after','limit','text'})
         if query.region is not None:
             from .contracts import Coverage
             filters['region']=Coverage.model_validate(query.region)
         if query.time is not None:filters['time']=query.time
         with db() as connection:entries=PostgresStore(connection).search(**filters)
         entries=[e for e in entries if value.permits(e.dataset.id) and (query.after is None or e.dataset.id>query.after)]
+        if query.text:
+            term=query.text.casefold()
+            entries=[e for e in entries if term in ' '.join([e.dataset.id,e.dataset.name,e.dataset.provider,*[v.id for v in e.dataset.variables]]).casefold()]
         selected=entries[:query.limit]
         return {'items':[e.model_dump(mode='json') for e in selected],'next_cursor':selected[-1].dataset.id if len(entries)>query.limit else None}
     @app.post('/v1/quality/policies')
@@ -143,6 +149,30 @@ def create_app(settings=None,connection_factory=connect):
     @app.post('/v1/quality/{dataset_id}/incidents/{incident_id}/acknowledge')
     def quality_acknowledge(dataset_id:str,incident_id:UUID,value=Depends(admin)):
         with db() as connection:return quality.acknowledge(connection,dataset_id,incident_id,value.subject)
+    @app.get('/v1/admin/datasets/{dataset_id}')
+    def admin_overview(dataset_id:str,value=Depends(admin)):
+        with db() as connection:return jsonable_encoder(administration.overview(connection,dataset_id))
+    @app.get('/v1/admin/datasets/{dataset_id}/activity')
+    def admin_activity(dataset_id:str,kind:str='providers',after:str|None=Query(None,max_length=4096),limit:int=Query(50,ge=1,le=100),value=Depends(admin)):
+        with db() as connection:return jsonable_encoder(administration.activity(connection,dataset_id,kind,after,limit))
+    @app.post('/v1/admin/datasets/{dataset_id}/metadata')
+    def admin_metadata(dataset_id:str,change:administration.MetadataChange,value=Depends(admin)):
+        with db() as connection:return administration.edit_metadata(connection,dataset_id,change,value)
+    @app.post('/v1/admin/datasets/{dataset_id}/quality-policy')
+    def admin_quality_policy(dataset_id:str,change:administration.PolicyChange,value=Depends(admin)):
+        with db() as connection:return administration.save_policy(connection,dataset_id,change,value)
+    @app.post('/v1/admin/datasets/{dataset_id}/retention-policy')
+    def admin_retention_policy(dataset_id:str,change:administration.RetentionChange,value=Depends(admin)):
+        with db() as connection:return administration.save_policy(connection,dataset_id,change,value,retention=True)
+    @app.post('/v1/admin/datasets/{dataset_id}/retention-plan')
+    def admin_retention_plan(dataset_id:str,value=Depends(admin)):
+        with db() as connection:
+            result=lifecycle.create_plan(connection,dataset_id)
+            administration.audit(connection,dataset_id,'retention_plan_created',value,plan_id=result['id'])
+            return result
+    @app.post('/v1/admin/datasets/{dataset_id}/jobs/{job_id}/cancel')
+    def admin_cancel_job(dataset_id:str,job_id:UUID,value=Depends(admin)):
+        with db() as connection:return administration.cancel_job(connection,dataset_id,job_id,value)
     @app.get('/v1/datasets/{dataset_id}')
     def dataset(dataset_id:str,value=Depends(principal)):
         permit(value,dataset_id)
@@ -151,9 +181,9 @@ def create_app(settings=None,connection_factory=connect):
     def versions(dataset_id:str,limit:int=Query(100,ge=1,le=1000),after:UUID|None=None,value=Depends(principal)):
         permit(value,dataset_id)
         with db() as connection:
-            rows=connection.execute('SELECT version_id,published_at,previous_version FROM matrix_db.array_versions WHERE dataset_id=%s AND (%s::uuid IS NULL OR version_id>%s) ORDER BY version_id LIMIT %s',
+            rows=connection.execute("SELECT v.version_id,v.published_at,v.previous_version,coalesce(l.tier,'hot') FROM matrix_db.array_versions v LEFT JOIN matrix_db.array_locations l USING(version_id) WHERE v.dataset_id=%s AND (%s::uuid IS NULL OR version_id>%s) ORDER BY version_id LIMIT %s",
                 (dataset_id,after,after,limit+1)).fetchall()
-        return jsonable_encoder({'items':[{'version_id':r[0],'published_at':r[1],'previous_version':r[2]} for r in rows[:limit]],'next_cursor':str(rows[limit-1][0]) if len(rows)>limit else None})
+        return jsonable_encoder({'items':[{'version_id':r[0],'published_at':r[1],'previous_version':r[2],'tier':r[3]} for r in rows[:limit]],'next_cursor':str(rows[limit-1][0]) if len(rows)>limit else None})
     @app.get('/v1/imports/{job_id}')
     def import_status(job_id:str,value=Depends(principal)):
         from .ingestion import job_report

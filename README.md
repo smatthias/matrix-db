@@ -22,7 +22,7 @@ The example contains synthetic temperature, humidity and wind observations, not 
 - Schema version 1 rejects unknown fields. IDs are nonempty stable strings.
 - Locations and coverage use EPSG:4326, longitude then latitude, in degrees. West greater than east denotes antimeridian-crossing coverage. Coverage edges are inclusive.
 - Timestamps require an explicit timezone and normalize to UTC. Valid time and ingestion time are independent. Forecasts also require an issue time no later than valid time.
-- Numeric values reject strings, booleans, NaN and infinities. Missing measurements use JSON null, permitted only for nullable variables. Integer variables require integer values.
+- Numeric values reject s…27 tokens truncated…iables. Integer variables require integer values.
 - Units must match the variable exactly; automatic conversion is outside Step 1.
 - Vertical coordinates require metres, positive direction and an explicit reference. No vertical datum transformation is performed.
 - Bundles validate dataset/variable references, location coverage, ranges, unit consistency and unique observation IDs. Cross-bundle identity and persistence are future work.
@@ -370,3 +370,18 @@ cold-copy deletion or staging/orphan cleanup is automatic. See
 [commands, guarantees and limits](docs/lifecycle.md) and
 [example retention policy](examples/retention-policy.json). No production lifecycle action
 was executed. Step 16 covers administration and the data explorer.
+
+
+## Step 16 — Administration and data explorer
+
+Admin-only operational views expose sanitized provider/import/job/storage/audit activity
+with bounded pagination. Metadata edits use checksum conflict checks; policy editors use
+revision conflict checks. Metadata/policy changes, job cancellation and retention previews
+are audited. Retention previews never execute filesystem mutations.
+
+GeoSentinel adds a separate admin-session page with a dedicated server-side admin key,
+and expands the reader explorer with paginated catalogue search/filtering, array versions,
+manifest axes and explicit bounded field samples. See [administration contracts and
+limits](docs/administration.md). Full browser E2E, deployment, per-human service audit
+attribution and project-level permission isolation remain unverified or unimplemented.
+Step 17 covers subscriptions and notifications.

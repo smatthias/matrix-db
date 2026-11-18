@@ -22,7 +22,7 @@ from .alignment import AlignmentRequest,align_and_publish
 from .derived import Definition,DerivationRequest,register_definitions,derive_and_publish
 from .scenarios import Scenario,ScenarioRef,RunRequest,RunChange,OutputAttachment,ComparisonRequest,register_scenario,resolve_inputs,create_run,transition_run,attach_output,get_run,compare_and_publish
 from .storage import connect,PostgresStore,LATEST_VERSION
-from . import api_jobs,quality,administration,lifecycle,notifications,quotas
+from . import api_jobs,quality,administration,lifecycle,notifications,quotas,hazards
 
 class ObservationBatch(Contract):
     dataset_id: Identifier
@@ -192,6 +192,39 @@ def create_app(settings=None,connection_factory=connect):
     @app.post('/v1/quality/{dataset_id}/incidents/{incident_id}/acknowledge')
     def quality_acknowledge(dataset_id:str,incident_id:UUID,value=Depends(admin)):
         with db() as connection:return quality.acknowledge(connection,dataset_id,incident_id,value.subject)
+    @app.exception_handler(hazards.Conflict)
+    async def hazard_conflict(request,error):return response_error('stale_hazard','policy or event changed; reload before saving',409,request.state.request_id)
+    @app.get('/v1/hazards/{dataset_id}')
+    def hazard_list(dataset_id:str,after:UUID|None=None,limit:int=Query(50,ge=1,le=100),status:str='all',value=Depends(principal)):
+        permit(value,dataset_id)
+        if status not in ('all','active','resolved','retracted','superseded'):raise ValueError('unknown hazard state')
+        with db() as connection:return jsonable_encoder(hazards.listing(connection,dataset_id,after=after,limit=limit,status=status))
+    @app.get('/v1/hazards/{dataset_id}/policy')
+    def hazard_policy(dataset_id:str,value=Depends(principal)):
+        permit(value,dataset_id)
+        with db() as connection:
+            revision,policy=hazards.get_policy(connection,dataset_id)
+            latest=hazards.rows(connection,'SELECT id,evaluated_at,findings FROM matrix_db.hazard_assessments WHERE dataset_id=%s AND policy_revision=%s ORDER BY evaluated_at DESC,id DESC LIMIT 1',(dataset_id,revision))
+            return jsonable_encoder({'revision':revision,'policy':policy.model_dump(mode='json'),'latest_assessment':latest[0] if latest else None})
+    @app.get('/v1/hazards/{dataset_id}/events/{ident}')
+    def hazard_detail(dataset_id:str,ident:UUID,value=Depends(principal)):
+        permit(value,dataset_id)
+        with db() as connection:return jsonable_encoder(hazards.detail(connection,dataset_id,ident))
+    @app.post('/v1/admin/datasets/{dataset_id}/hazard-policy')
+    def hazard_save_policy(dataset_id:str,change:hazards.PolicyChange,value=Depends(admin)):
+        if dataset_id!=change.policy.dataset_id:raise ValueError('policy dataset mismatch')
+        with db() as connection:
+            result=hazards.register(connection,change,value.subject)
+            administration.audit(connection,dataset_id,'hazard_policy_saved',value,revision=result['revision'])
+            return result
+    @app.post('/v1/admin/datasets/{dataset_id}/hazard-evaluate')
+    def hazard_evaluate(dataset_id:str,value=Depends(admin)):
+        quotas.admit(connection_factory,settings.limits)
+        with connection_factory() as connection:return jsonable_encoder(hazards.evaluate(connection,dataset_id))
+    @app.post('/v1/admin/datasets/{dataset_id}/hazard-events/{ident}/{action}')
+    def hazard_change(dataset_id:str,ident:UUID,action:str,change:hazards.EventChange,value=Depends(admin)):
+        if action not in ('acknowledge','retract'):raise ValueError('unsupported hazard action')
+        with db() as connection:return hazards.change_event(connection,dataset_id,ident,change,value.subject,retract=action=='retract')
     @app.get('/v1/admin/datasets/{dataset_id}/resources')
     def admin_resources(dataset_id:str,value=Depends(admin)):
         with db() as connection:return quotas.report(connection,dataset_id,settings.limits)

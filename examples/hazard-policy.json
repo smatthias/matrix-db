@@ -1,0 +1,11 @@
+{
+ "dataset_id":"demo-weather",
+ "lookback_seconds":3600,
+ "rules":[{
+  "id":"synthetic-heat-signal","name":"Synthetic heat threshold example",
+  "hazard_type":"heat","variable_id":"temperature","unit":"degC",
+  "direction":"above","aggregation":"maximum",
+  "trigger_threshold":30,"release_threshold":28,"critical_threshold":35,
+  "minimum_samples":1,"minimum_duration_seconds":0,"max_age_seconds":3600
+ }]
+}

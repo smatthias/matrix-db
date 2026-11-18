@@ -414,3 +414,19 @@ See [configuration, accounting semantics and operator inspection](docs/resources
 These are logical application budgets, not OS hard quotas or billing. Physical staging,
 backups, existing history and archived payloads are not automatically deleted. Production
 load/fairness and deployment remain unverified. Step 19 covers hazard and event detection.
+
+
+## Step 19 — Hazard and event detection
+
+Versioned configured rules assess rolling observation windows with explicit variables/units,
+aggregation, trigger/release hysteresis, severity and qualifying-sample persistence. One
+analytical signal per rule/region tracks evidence updates, escalation, resolution, review,
+retraction and policy supersession. Assessments pin original observation revisions; missing
+or stale input stays unknown rather than claiming clearance. A separate hazard notification
+topic preserves transition-time severity and existing private inbox/backpressure controls.
+
+The operator `matrix-db-detect`, scoped read/admin APIs and GeoSentinel signal explorer/admin
+controls use synthetic fixtures for qualification. See [semantics and limits](docs/hazards.md)
+and the [synthetic example policy](examples/hazard-policy.json). This is a generic analytical
+threshold engine, not scientifically validated physical hazard forecasting or official alerts.
+Full browser E2E/deployment remain unverified. Step 20 covers exposure and impact assessment.

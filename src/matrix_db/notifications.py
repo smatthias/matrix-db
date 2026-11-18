@@ -9,9 +9,10 @@ from .contracts import Contract,Identifier
 from .storage import PostgresStore
 
 class Subscription(Contract):
+    topic: Literal['quality','hazard']='quality'
     name: str=Field(min_length=1,max_length=150)
     dataset_id: Identifier
-    kinds: list[Literal['opened','acknowledged','resolved','policy_superseded']]=Field(default_factory=lambda:['opened','resolved'],min_length=1,max_length=4)
+    kinds: list[Literal['opened','acknowledged','resolved','policy_superseded','updated','severity_changed','retracted']]=Field(default_factory=lambda:['opened','resolved'],min_length=1,max_length=7)
     minimum_severity: Literal['warning','critical']='warning'
     rule_ids: list[Identifier]=Field(default_factory=list,max_length=50)
     active: bool=True
@@ -19,6 +20,7 @@ class Subscription(Contract):
     @model_validator(mode='after')
     def unique(self):
         if not self.name.strip() or len(set(self.kinds))!=len(self.kinds) or len(set(self.rule_ids))!=len(self.rule_ids):raise ValueError('subscription name and filters must be unambiguous')
+        if self.topic=='quality' and any(k in ('updated','severity_changed','retracted') for k in self.kinds):raise ValueError('hazard transitions require hazard topic')
         return self
 class SubscriptionChange(Contract):
     expected_revision: int=Field(ge=1)
@@ -38,6 +40,10 @@ def permitted(principal,dataset):
 def version(connection,ident,revision,definition,action):
     connection.execute('INSERT INTO matrix_db.notification_subscription_versions(subscription_id,revision,definition,action) VALUES (%s,%s,%s,%s)',(ident,revision,Jsonb(definition),action))
 
+def boundary(connection,dataset,topic):
+    table='hazard_feed' if topic=='hazard' else 'quality_events'
+    return connection.execute(f'SELECT coalesce(max(sequence),0) FROM matrix_db.{table} WHERE dataset_id=%s',(dataset,)).fetchone()[0]
+
 def create(connection,request,principal,delegated=None):
     owner=owner_key(principal,delegated);permitted(principal,request.dataset_id)
     # Serialize owner creation across datasets to enforce the small per-owner cap.
@@ -48,7 +54,7 @@ def create(connection,request,principal,delegated=None):
     cap=ResourceLimits.from_environment().subscriptions_per_owner
     if count>=cap:raise QuotaExceeded('subscriptions_per_owner',cap)
     connection.execute('SELECT id FROM matrix_db.datasets WHERE id=%s FOR UPDATE',(request.dataset_id,));PostgresStore(connection).get(request.dataset_id)
-    cursor=0 if request.start=='beginning' else connection.execute('SELECT coalesce(max(sequence),0) FROM matrix_db.quality_events WHERE dataset_id=%s',(request.dataset_id,)).fetchone()[0]
+    cursor=0 if request.start=='beginning' else boundary(connection,request.dataset_id,request.topic)
     ident=uuid4();definition=request.model_dump(mode='json')
     connection.execute('''INSERT INTO matrix_db.notification_subscriptions(id,owner,credential_id,delegated_owner,dataset_id,definition,active,last_sequence)
         VALUES (%s,%s,%s,%s,%s,%s,%s,%s)''',(ident,owner,principal.credential_id,delegated,request.dataset_id,Jsonb(definition),request.active,cursor))
@@ -72,7 +78,7 @@ def update(connection,ident,change,principal,delegated=None):
     if row[2]!=change.expected_revision:raise Conflict()
     definition=change.subscription.model_dump(mode='json');revision=row[2]+1
     # Updates/resume start at the current boundary unless replay was explicitly selected.
-    cursor=0 if change.subscription.start=='beginning' else connection.execute('SELECT coalesce(max(sequence),0) FROM matrix_db.quality_events WHERE dataset_id=%s',(row[1],)).fetchone()[0]
+    cursor=0 if change.subscription.start=='beginning' else boundary(connection,row[1],change.subscription.topic)
     connection.execute('UPDATE matrix_db.notification_subscriptions SET definition=%s,active=%s,revision=%s,last_sequence=%s,error_code=NULL WHERE id=%s',(Jsonb(definition),change.subscription.active,revision,cursor,row[0]))
     version(connection,row[0],revision,definition,'updated')
     return {'id':str(row[0]),'revision':revision,'subscription':definition}
@@ -113,21 +119,26 @@ def run_one(settings,connection_factory,batch_size=100):
             connection.execute("UPDATE matrix_db.notification_subscriptions SET active=false,error_code='authorization_revoked',revision=revision+1 WHERE id=%s",(ident,))
             version(connection,ident,revision+1,definition,'authorization_revoked');return True
         request=Subscription.model_validate(definition)
-        rows=connection.execute('''SELECT e.sequence,e.kind,e.at,e.incident_id,e.evaluation_id,i.rule_id,i.severity
-            FROM matrix_db.quality_events e JOIN matrix_db.quality_incidents i ON i.id=e.incident_id
-            WHERE e.dataset_id=%s AND e.sequence>%s ORDER BY e.sequence LIMIT %s''',(dataset,cursor,batch_size)).fetchall()
+        if request.topic=='hazard':
+            rows=connection.execute('SELECT sequence,kind,at,event_id,assessment_id,rule_id,severity FROM matrix_db.hazard_feed WHERE dataset_id=%s AND sequence>%s ORDER BY sequence LIMIT %s',(dataset,cursor,batch_size)).fetchall()
+            sequence_column='hazard_sequence'
+        else:
+            rows=connection.execute('''SELECT e.sequence,e.kind,e.at,e.incident_id,e.evaluation_id,i.rule_id,i.severity
+                FROM matrix_db.quality_events e JOIN matrix_db.quality_incidents i ON i.id=e.incident_id
+                WHERE e.dataset_id=%s AND e.sequence>%s ORDER BY e.sequence LIMIT %s''',(dataset,cursor,batch_size)).fetchall()
+            sequence_column='event_sequence'
         from .quotas import inbox_capacity
         processed=False
         for sequence,kind,at,incident,evaluation,rule,severity in rows:
             if not matches(request,kind,severity,rule):cursor=sequence;processed=True;continue
-            existing=connection.execute('SELECT id FROM matrix_db.notification_deliveries WHERE owner=%s AND event_sequence=%s',(owner,sequence)).fetchone()
+            existing=connection.execute(f'SELECT id FROM matrix_db.notification_deliveries WHERE owner=%s AND {sequence_column}=%s',(owner,sequence)).fetchone()
             if existing is None and not inbox_capacity(connection,owner,settings.limits):
                 connection.execute("UPDATE matrix_db.notification_subscriptions SET last_sequence=%s,last_polled_at=clock_timestamp(),error_code='inbox_capacity' WHERE id=%s",(cursor,ident))
                 return processed
-            payload={'event_sequence':sequence,'dataset_id':dataset,'kind':kind,'at':at.isoformat(),'incident_id':str(incident),
+            payload={'topic':request.topic,'event_sequence':sequence,'dataset_id':dataset,'kind':kind,'at':at.isoformat(),('event_id' if request.topic=='hazard' else 'incident_id'):str(incident),
                 'evaluation_id':str(evaluation) if evaluation else None,'rule_id':rule,'severity':severity}
-            delivery=connection.execute('''INSERT INTO matrix_db.notification_deliveries(owner,dataset_id,event_sequence,payload)
-                VALUES (%s,%s,%s,%s) ON CONFLICT(owner,event_sequence) DO UPDATE SET owner=EXCLUDED.owner RETURNING id''',(owner,dataset,sequence,Jsonb(payload))).fetchone()[0]
+            delivery=connection.execute(f'''INSERT INTO matrix_db.notification_deliveries(owner,dataset_id,{sequence_column},payload)
+                VALUES (%s,%s,%s,%s) ON CONFLICT(owner,{sequence_column}) DO UPDATE SET owner=EXCLUDED.owner RETURNING id''',(owner,dataset,sequence,Jsonb(payload))).fetchone()[0]
             connection.execute('INSERT INTO matrix_db.notification_matches VALUES (%s,%s) ON CONFLICT DO NOTHING',(delivery,ident))
             cursor=sequence;processed=True
         connection.execute('UPDATE matrix_db.notification_subscriptions SET last_sequence=%s,last_polled_at=clock_timestamp(),error_code=NULL WHERE id=%s',(cursor,ident))

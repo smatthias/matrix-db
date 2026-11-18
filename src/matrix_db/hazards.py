@@ -116,7 +116,9 @@ def assess(policy,inputs,now):
     else:state='holding'
    if rule.critical_threshold is not None and exceeds(rule,metric,rule.critical_threshold):severity='critical'
   support=[{'observation_id':r[0].id,'revision':r[1],'recorded_at':r[2].isoformat()} for r in matched]
-  fingerprint=hashlib.sha256(canonical(support).encode()).hexdigest()
+  # All aggregate inputs matter (including below-threshold mean inputs); identity
+  # depends on immutable revisions, not database timestamp display/timezone.
+  fingerprint=hashlib.sha256(canonical([{'observation_id':r[0].id,'revision':r[1]} for r in sorted(selected,key=lambda row:row[0].id)]).encode()).hexdigest()
   representative=(max(samples,key=lambda s:s.value) if rule.direction=='above' else min(samples,key=lambda s:s.value)) if samples else None
   findings.append({'rule_id':rule.id,'name':rule.name,'hazard_type':rule.hazard_type,'state':state,'severity':severity,'metric':metric,'unit':rule.unit,
    'sample_count':len(samples),'support_count':len(matched),'support_hash':fingerprint,'evidence':support[:20],

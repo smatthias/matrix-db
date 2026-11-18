@@ -37,6 +37,9 @@ class HazardContractTest(unittest.TestCase):
   self.assertEqual(hazards.assess(policy(),[(sample(27),1,NOW)],NOW)[0]['state'],'holding')
   self.assertEqual(hazards.assess(policy(),[(sample(20),1,NOW)],NOW)[0]['state'],'clear')
   self.assertEqual(hazards.assess(policy(),[(sample(50,offset=-1000),1,NOW)],NOW)[0]['state'],'unknown')
+  first=hazards.assess(policy(aggregation='mean'),[(sample(35),1,NOW),(sample(29,ident='low'),1,NOW)],NOW)[0]
+  changed=hazards.assess(policy(aggregation='mean'),[(sample(35),1,NOW),(sample(28,ident='low'),2,NOW)],NOW)[0]
+  self.assertNotEqual(first['support_hash'],changed['support_hash'])
  def test_region_bad_flags_antimeridian_and_below_direction(self):
   p=policy(region={'west':170,'east':-170,'south':-90,'north':90})
   result=hazards.assess(p,[(sample(35,longitude=179),1,NOW),(sample(50,ident='bad',quality='bad'),1,NOW)],NOW)[0]

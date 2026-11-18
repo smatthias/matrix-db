@@ -50,8 +50,8 @@ Detected events open once, update when evidence/state changes and retain their i
 active. Severity changes produce an explicit transition. Repeat assessments with unchanged
 signals do not spam transition notifications. Resolving then detecting again opens a new ID.
 Acknowledgement records review but does not resolve the signal. Administrator retraction
-requires a reason and expected event revision. An assessment labels matching evidence suppressed after retraction. Identical supporting evidence will not reopen
-a retracted signal; changed source revisions/record identities or a new policy can generate a
+requires a reason and expected event revision. An assessment labels unchanged rule inputs suppressed after retraction. Identical input record IDs/revisions will not reopen
+a retracted signal; changed aggregate inputs (including window membership), source revisions/record identities or a new policy can generate a
 new signal. Retraction is not a permanent mute of a geographic region.
 
 Live evaluations reject backdated evaluation times. They use a repeatable-read transaction,

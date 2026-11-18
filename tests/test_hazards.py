@@ -28,6 +28,8 @@ def auth(token=ADMIN):return {'Authorization':'Bearer '+token}
 
 class HazardContractTest(unittest.TestCase):
  def test_threshold_units_and_persistence_validation(self):
+  defaults=notifications.Subscription(name='defaults',dataset_id='demo-weather',topic='hazard')
+  self.assertIn('retracted',defaults.kinds);self.assertIn('severity_changed',defaults.kinds)
   for updates in [{'release_threshold':30},{'critical_threshold':29},{'minimum_duration_seconds':4000}]:
    with self.assertRaises(ValueError):policy(**updates)
  def test_detection_persistence_hysteresis_and_unknown(self):

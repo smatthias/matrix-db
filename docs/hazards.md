@@ -87,7 +87,9 @@ or publish any warning. Existing API rate/execution controls apply to HTTP asses
 
 Subscriptions now accept topic:quality (default, preserving existing behavior) or topic:hazard.
 Hazard kinds are opened, updated, severity_changed, resolved, acknowledged, retracted and
-policy_superseded. Quality subscriptions reject hazard-only kinds. Topic changes reset the
+policy_superseded. New hazard subscriptions default to opened, severity_changed, resolved, retracted and
+policy_superseded so revisions/retractions are not silently omitted. Explicit filters are
+preserved. Quality subscriptions reject hazard-only kinds. Topic changes reset the
 checkpoint according to start:now|beginning. Deduplication is owner+topic+event sequence, so
 sequences from different feeds never collide. Both topics share retained inbox capacity and
 keep blocked checkpoints under backpressure. Hazard severity is captured at transition time;

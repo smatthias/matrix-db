@@ -17,6 +17,12 @@ class Subscription(Contract):
     rule_ids: list[Identifier]=Field(default_factory=list,max_length=50)
     active: bool=True
     start: Literal['now','beginning']='now'
+    @model_validator(mode='before')
+    @classmethod
+    def topic_defaults(cls,value):
+        if isinstance(value,dict) and value.get('topic')=='hazard' and 'kinds' not in value:
+            return {**value,'kinds':['opened','severity_changed','resolved','retracted','policy_superseded']}
+        return value
     @model_validator(mode='after')
     def unique(self):
         if not self.name.strip() or len(set(self.kinds))!=len(self.kinds) or len(set(self.rule_ids))!=len(self.rule_ids):raise ValueError('subscription name and filters must be unambiguous')

@@ -114,8 +114,9 @@ def poll_source(source,connection_factory=connect,transport=None,now=None,backfi
                     return {'status':'completed','run_id':str(ident),**counts}
                 except Exception as error:
                     # Never store exception text: request URLs can contain FIRMS credentials.
-                    code=error.code if isinstance(error,ProviderError) else 'ingestion_failed'
-                    delay=max(source.interval_seconds,min(86400,60*2**min(state['failures'],10)),getattr(error,'retry_after',0))
+                    from .quotas import QuotaExceeded
+                    code=error.code if isinstance(error,(ProviderError,QuotaExceeded)) else 'ingestion_failed'
+                    delay=max(source.interval_seconds,min(86400,60*2**min(state['failures'],10)),(getattr(error,'retry_after',0) or 0))
                     with connection_factory() as control:
                         changed=control.execute("UPDATE matrix_db.provider_runs SET status='failed',error_code=%s,finished_at=%s WHERE id=%s AND status='running' RETURNING id",(code,now,ident)).fetchone()
                         if changed:control.execute('UPDATE matrix_db.provider_sources SET failures=failures+1,error_code=%s,next_attempt_at=%s WHERE id=%s',(code,now+timedelta(seconds=delay),source.id))

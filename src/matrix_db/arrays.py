@@ -172,6 +172,8 @@ class ArrayStore:
             row=self.connection.execute('SELECT entry FROM matrix_db.datasets WHERE id=%s',(spec.dataset_id,)).fetchone()
             if row is None:raise KeyError(spec.dataset_id)
             registered=CatalogueEntry.model_validate(row[0]).dataset
+            from .quotas import ResourceLimits,check_arrays
+            check_arrays(self.connection,spec.dataset_id,0,ResourceLimits.from_environment())
         definitions={v.id:v for v in registered.variables}
         for variable in spec.variables:
             definition=definitions.get(variable.id)
@@ -239,16 +241,20 @@ class ArrayStore:
                 stream.write(payload);stream.flush();os.fsync(stream.fileno())
             sync_dir(staging)
             with self.connection.transaction():
-                row=self.connection.execute('SELECT entry FROM matrix_db.datasets WHERE id=%s FOR SHARE',(spec.dataset_id,)).fetchone()
+                row=self.connection.execute('SELECT entry FROM matrix_db.datasets WHERE id=%s FOR UPDATE',(spec.dataset_id,)).fetchone()
                 if row is None:raise KeyError(spec.dataset_id)
                 dataset=CatalogueEntry.model_validate(row[0]).dataset
                 if dataset.variables!=registered.variables:
                     raise ValueError('dataset variables changed while staging; restart publication')
+                from .quotas import ResourceLimits,check_arrays
+                stored_bytes=sum(path.stat().st_size for path in staging.rglob('*') if path.is_file())
+                check_arrays(self.connection,spec.dataset_id,stored_bytes,ResourceLimits.from_environment())
                 # Files precede the commit: unreferenced directories are recoverable, missing published files are not.
                 os.replace(staging,final);sync_dir(self.root/'versions')
                 self.connection.execute('''INSERT INTO matrix_db.array_versions
                     (dataset_id,version_id,previous_version,manifest,manifest_checksum) VALUES (%s,%s,%s,%s,%s)''',
                     (spec.dataset_id,version,spec.previous_version,Jsonb(manifest),hashlib.sha256(payload.encode()).hexdigest()))
+                self.connection.execute('INSERT INTO matrix_db.array_resources VALUES (%s,%s)',(version,stored_bytes))
             return version
         finally:
             if staging.exists():shutil.rmtree(staging)

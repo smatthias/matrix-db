@@ -6,6 +6,7 @@ from pydantic import Field, StrictInt, field_validator, model_validator
 from psycopg.types.json import Jsonb
 from .catalogue import CatalogueEntry, TimeCoverage
 from .contracts import Contract, Identifier, Observation, VerticalCoordinate
+from .quotas import check_revisions
 from .queries import ObservationQuery, Point, VerticalRange, Match, build_query
 
 class Change(Contract):
@@ -31,13 +32,14 @@ def revise(connection, observation, *, expected_revision, reason, actor):
     change=Change(expected_revision=expected_revision,reason=reason,actor=actor)
     observation=Observation.model_validate_json(observation.model_dump_json())
     with connection.transaction():
-        row=connection.execute('SELECT entry FROM matrix_db.datasets WHERE id=%s FOR SHARE',(observation.dataset_id,)).fetchone()
+        row=connection.execute('SELECT entry FROM matrix_db.datasets WHERE id=%s FOR UPDATE',(observation.dataset_id,)).fetchone()
         if row is None: raise KeyError(observation.dataset_id)
         observation.validate_against(CatalogueEntry.model_validate(row[0]).dataset)
         current=connection.execute('SELECT revision FROM matrix_db.observations WHERE dataset_id=%s AND id=%s FOR UPDATE',
                                    (observation.dataset_id,observation.id)).fetchone()
         if current is None: raise KeyError(observation.id)
         if current[0]!=change.expected_revision: raise ValueError('revision conflict; reload current revision before retrying')
+        check_revisions(connection,observation.dataset_id)
         row=connection.execute('''UPDATE matrix_db.observations SET variable_id=%s,valid_time=%s,
             longitude=%s,latitude=%s,record=%s,is_withdrawn=false,change_reason=%s,changed_by=%s
             WHERE dataset_id=%s AND id=%s RETURNING revision,recorded_at''',
@@ -50,13 +52,14 @@ def withdraw(connection, dataset_id, observation_id, *, expected_revision, reaso
     change=Change(expected_revision=expected_revision,reason=reason,actor=actor)
     with connection.transaction():
         # Lock ordering matches correction/ingestion: dataset first, observation second.
-        row=connection.execute('SELECT id FROM matrix_db.datasets WHERE id=%s FOR SHARE',(dataset_id,)).fetchone()
+        row=connection.execute('SELECT id FROM matrix_db.datasets WHERE id=%s FOR UPDATE',(dataset_id,)).fetchone()
         if row is None: raise KeyError(dataset_id)
         current=connection.execute('SELECT revision,is_withdrawn FROM matrix_db.observations WHERE dataset_id=%s AND id=%s FOR UPDATE',
                                    (dataset_id,observation_id)).fetchone()
         if current is None: raise KeyError(observation_id)
         if current[0]!=change.expected_revision: raise ValueError('revision conflict; reload current revision before retrying')
         if current[1]: raise ValueError('observation is already withdrawn')
+        check_revisions(connection,dataset_id)
         row=connection.execute('''UPDATE matrix_db.observations SET is_withdrawn=true,change_reason=%s,changed_by=%s
             WHERE dataset_id=%s AND id=%s RETURNING revision,recorded_at''',
             (change.reason,change.actor,dataset_id,observation_id)).fetchone()

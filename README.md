@@ -22,7 +22,7 @@ The example contains synthetic temperature, humidity and wind observations, not 
 - Schema version 1 rejects unknown fields. IDs are nonempty stable strings.
 - Locations and coverage use EPSG:4326, longitude then latitude, in degrees. West greater than east denotes antimeridian-crossing coverage. Coverage edges are inclusive.
 - Timestamps require an explicit timezone and normalize to UTC. Valid time and ingestion time are independent. Forecasts also require an issue time no later than valid time.
-- Numeric values reject s…27 tokens truncated…iables. Integer variables require integer values.
+- Numeric values reject strings, booleans, NaN and infinities. Missing measurements use JSON null, permitted only for nullable variables. Integer variables require integer values.
 - Units must match the variable exactly; automatic conversion is outside Step 1.
 - Vertical coordinates require metres, positive direction and an explicit reference. No vertical datum transformation is performed.
 - Bundles validate dataset/variable references, location coverage, ranges, unit consistency and unique observation IDs. Cross-bundle identity and persistence are future work.
@@ -385,3 +385,48 @@ manifest axes and explicit bounded field samples. See [administration contracts 
 limits](docs/administration.md). Full browser E2E, deployment, per-human service audit
 attribution and project-level permission isolation remain unverified or unimplemented.
 Step 17 covers subscriptions and notifications.
+
+
+## Step 17 — Subscriptions and notifications
+
+Credential-owned, dataset-scoped incident subscriptions filter transitions, severity and
+rule IDs. Atomic fanout/checkpoint transactions deliver deduplicated in-app messages with
+read state, bounded paging, replay, pause/resume and versioned unsubscribe history.
+`matrix-db-notify` runs the separate durable delivery loop with bounded database retries.
+GeoSentinel uses a dedicated scoped notification gateway key and server-derived user identity
+for private subscriptions/inboxes, alongside its ordinary reader/admin keys.
+
+See [ownership, API, worker and delivery semantics](docs/notifications.md). Delivery is
+in-app only: no external email/webhook/push is sent. Full browser E2E and deployment remain
+unverified. Step 18 covers quotas and resource controls.
+
+
+## Step 18 — Quotas and resource controls
+
+Configurable resource limits add distributed per-credential minute admission, per-process
+request execution slots, global/per-credential active-job caps, atomic observation/revision
+capacity checks, array-version/logical-byte accounting, subscription caps and inbox
+backpressure. Capacity failures preserve data/checkpoints and return explicit HTTP status,
+resource details and transient Retry-After hints. Clients do not automatically replay them.
+GeoSentinel preserves capacity responses and its admin page exposes read-only resource usage.
+
+See [configuration, accounting semantics and operator inspection](docs/resources.md).
+These are logical application budgets, not OS hard quotas or billing. Physical staging,
+backups, existing history and archived payloads are not automatically deleted. Production
+load/fairness and deployment remain unverified. Step 19 covers hazard and event detection.
+
+
+## Step 19 — Hazard and event detection
+
+Versioned configured rules assess rolling observation windows with explicit variables/units,
+aggregation, trigger/release hysteresis, severity and qualifying-sample persistence. One
+analytical signal per rule/region tracks evidence updates, escalation, resolution, review,
+retraction and policy supersession. Assessments pin original observation revisions; missing
+or stale input stays unknown rather than claiming clearance. A separate hazard notification
+topic preserves transition-time severity and existing private inbox/backpressure controls.
+
+The operator `matrix-db-detect`, scoped read/admin APIs and GeoSentinel signal explorer/admin
+controls use synthetic fixtures for qualification. See [semantics and limits](docs/hazards.md)
+and the [synthetic example policy](examples/hazard-policy.json). This is a generic analytical
+threshold engine, not scientifically validated physical hazard forecasting or official alerts.
+Full browser E2E/deployment remain unverified. Step 20 covers exposure and impact assessment.

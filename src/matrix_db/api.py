@@ -1,10 +1,11 @@
 """Version-one HTTP API. Advanced mutations require an administrative credential."""
 import json
+import threading
 from contextlib import contextmanager
 from uuid import UUID,uuid4
 import numpy as np
 import psycopg
-from fastapi import FastAPI,Depends,HTTPException,Query
+from fastapi import FastAPI,Depends,HTTPException,Query,Header
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse,StreamingResponse
@@ -21,7 +22,7 @@ from .alignment import AlignmentRequest,align_and_publish
 from .derived import Definition,DerivationRequest,register_definitions,derive_and_publish
 from .scenarios import Scenario,ScenarioRef,RunRequest,RunChange,OutputAttachment,ComparisonRequest,register_scenario,resolve_inputs,create_run,transition_run,attach_output,get_run,compare_and_publish
 from .storage import connect,PostgresStore,LATEST_VERSION
-from . import api_jobs,quality,administration,lifecycle
+from . import api_jobs,quality,administration,lifecycle,notifications,quotas,hazards
 
 class ObservationBatch(Contract):
     dataset_id: Identifier
@@ -57,8 +58,10 @@ def create_app(settings=None,connection_factory=connect):
     settings=Settings.from_environment() if settings is None else settings
     app=FastAPI(title='Matrix DB',version='1.0.0')
     bearer=HTTPBearer(auto_error=False)
+    slots=threading.BoundedSemaphore(settings.limits.concurrent_http_requests)
     @contextmanager
     def db():
+        quotas.admit(connection_factory,settings.limits)
         with connection_factory() as connection:
             connection.execute("SET LOCAL statement_timeout='15s'")
             yield connection
@@ -81,14 +84,28 @@ def create_app(settings=None,connection_factory=connect):
     @app.middleware('http')
     async def envelope(request,call_next):
         request_id=str(uuid4());request.state.request_id=request_id
-        size=0;parts=[]
-        async for chunk in request.stream():
-            size+=len(chunk)
-            if size>2*1024*1024:return response_error('request_too_large','request exceeds 2 MiB',413,request_id)
-            parts.append(chunk)
-        request._body=b''.join(parts)
-        response=await call_next(request);response.headers['X-Request-ID']=request_id
-        return response
+        if request.method=='GET' and request.url.path=='/health/live':
+            response=JSONResponse({'status':'live'});response.headers['X-Request-ID']=request_id;return response
+        if not slots.acquire(blocking=False):
+            response=response_error('server_busy','request execution capacity reached',503,request_id)
+            response.headers.update({'Retry-After':'1','X-Request-ID':request_id});return response
+        token=None
+        try:
+            size=0;parts=[]
+            async for chunk in request.stream():
+                size+=len(chunk)
+                if size>2*1024*1024:return response_error('request_too_large','request exceeds 2 MiB',413,request_id)
+                parts.append(chunk)
+            request._body=b''.join(parts)
+            auth=request.headers.get('Authorization','')
+            scheme,_,credential=auth.partition(' ')
+            value=settings.authenticate(credential) if scheme.lower()=='bearer' else None
+            token=quotas.current_admission.set(quotas.Admission(value.credential_id) if value else None)
+            response=await call_next(request);response.headers['X-Request-ID']=request_id
+            return response
+        finally:
+            if token is not None:quotas.current_admission.reset(token)
+            slots.release()
     @app.exception_handler(StarletteHTTPException)
     async def http_error(request,error):
         response=response_error('http_error',str(error.detail),error.status_code,request.state.request_id)
@@ -105,6 +122,31 @@ def create_app(settings=None,connection_factory=connect):
     async def internal_error(request,error):return response_error('internal_error','request could not be completed',500,getattr(request.state,'request_id',None))
     @app.exception_handler(administration.StaleEdit)
     async def stale_edit(request,error):return response_error('stale_edit','data changed; reload before saving',409,request.state.request_id)
+    @app.exception_handler(quotas.QuotaExceeded)
+    async def quota_error(request,error):
+        response=JSONResponse({'error':{'code':'quota_exceeded','message':'configured resource capacity reached','resource':error.resource,'limit':error.limit,'request_id':request.state.request_id}},status_code=429)
+        if error.retry_after is not None:response.headers['Retry-After']=str(error.retry_after)
+        return response
+    @app.exception_handler(notifications.Conflict)
+    async def subscription_conflict(request,error):return response_error('stale_subscription','subscription changed; reload before saving',409,request.state.request_id)
+    @app.get('/v1/subscriptions')
+    def notification_subscriptions(value=Depends(principal),owner:str|None=Header(None,alias='X-Matrix-Notification-Owner')):
+        with db() as connection:return notifications.subscriptions(connection,value,owner)
+    @app.post('/v1/subscriptions',status_code=201)
+    def notification_subscribe(request:notifications.Subscription,value=Depends(principal),owner:str|None=Header(None,alias='X-Matrix-Notification-Owner')):
+        with db() as connection:return notifications.create(connection,request,value,owner)
+    @app.put('/v1/subscriptions/{ident}')
+    def notification_update(ident:UUID,request:notifications.SubscriptionChange,value=Depends(principal),owner:str|None=Header(None,alias='X-Matrix-Notification-Owner')):
+        with db() as connection:return notifications.update(connection,ident,request,value,owner)
+    @app.delete('/v1/subscriptions/{ident}')
+    def notification_delete(ident:UUID,expected_revision:int=Query(...,ge=1),value=Depends(principal),owner:str|None=Header(None,alias='X-Matrix-Notification-Owner')):
+        with db() as connection:return notifications.remove(connection,ident,expected_revision,value,owner)
+    @app.get('/v1/notifications')
+    def notification_inbox(before:int|None=Query(None,ge=1,le=9223372036854775807),limit:int=Query(50,ge=1,le=100),unread:bool=False,value=Depends(principal),owner:str|None=Header(None,alias='X-Matrix-Notification-Owner')):
+        with db() as connection:return jsonable_encoder(notifications.inbox(connection,value,owner,before=before,limit=limit,unread=unread))
+    @app.post('/v1/notifications/{ident}/read')
+    def notification_read(ident:int,value=Depends(principal),owner:str|None=Header(None,alias='X-Matrix-Notification-Owner')):
+        with db() as connection:return jsonable_encoder(notifications.mark_read(connection,ident,value,owner))
     @app.get('/health/live')
     def live():return {'status':'live'}
     @app.get('/v1/ready')
@@ -136,7 +178,8 @@ def create_app(settings=None,connection_factory=connect):
         with db() as connection:return quality.register_policy(connection,policy,value.subject)
     @app.post('/v1/quality/{dataset_id}/evaluate')
     def quality_evaluate(dataset_id:str,value=Depends(admin)):
-        # Evaluation sets its transaction isolation before any query.
+        # Rate admission commits on a separate connection before the snapshot transaction.
+        quotas.admit(connection_factory,settings.limits)
         with connection_factory() as connection:return jsonable_encoder(quality.evaluate(connection,dataset_id))
     @app.get('/v1/quality/{dataset_id}/health')
     def quality_health(dataset_id:str,value=Depends(principal)):
@@ -149,6 +192,42 @@ def create_app(settings=None,connection_factory=connect):
     @app.post('/v1/quality/{dataset_id}/incidents/{incident_id}/acknowledge')
     def quality_acknowledge(dataset_id:str,incident_id:UUID,value=Depends(admin)):
         with db() as connection:return quality.acknowledge(connection,dataset_id,incident_id,value.subject)
+    @app.exception_handler(hazards.Conflict)
+    async def hazard_conflict(request,error):return response_error('stale_hazard','policy or event changed; reload before saving',409,request.state.request_id)
+    @app.get('/v1/hazards/{dataset_id}')
+    def hazard_list(dataset_id:str,after:UUID|None=None,limit:int=Query(50,ge=1,le=100),status:str='all',value=Depends(principal)):
+        permit(value,dataset_id)
+        if status not in ('all','active','resolved','retracted','superseded'):raise ValueError('unknown hazard state')
+        with db() as connection:return jsonable_encoder(hazards.listing(connection,dataset_id,after=after,limit=limit,status=status))
+    @app.get('/v1/hazards/{dataset_id}/policy')
+    def hazard_policy(dataset_id:str,value=Depends(principal)):
+        permit(value,dataset_id)
+        with db() as connection:
+            revision,policy=hazards.get_policy(connection,dataset_id)
+            latest=hazards.rows(connection,'SELECT id,evaluated_at,findings FROM matrix_db.hazard_assessments WHERE dataset_id=%s AND policy_revision=%s ORDER BY evaluated_at DESC,id DESC LIMIT 1',(dataset_id,revision))
+            return jsonable_encoder({'revision':revision,'policy':policy.model_dump(mode='json'),'latest_assessment':latest[0] if latest else None})
+    @app.get('/v1/hazards/{dataset_id}/events/{ident}')
+    def hazard_detail(dataset_id:str,ident:UUID,value=Depends(principal)):
+        permit(value,dataset_id)
+        with db() as connection:return jsonable_encoder(hazards.detail(connection,dataset_id,ident))
+    @app.post('/v1/admin/datasets/{dataset_id}/hazard-policy')
+    def hazard_save_policy(dataset_id:str,change:hazards.PolicyChange,value=Depends(admin)):
+        if dataset_id!=change.policy.dataset_id:raise ValueError('policy dataset mismatch')
+        with db() as connection:
+            result=hazards.register(connection,change,value.subject)
+            administration.audit(connection,dataset_id,'hazard_policy_saved',value,revision=result['revision'])
+            return result
+    @app.post('/v1/admin/datasets/{dataset_id}/hazard-evaluate')
+    def hazard_evaluate(dataset_id:str,value=Depends(admin)):
+        quotas.admit(connection_factory,settings.limits)
+        with connection_factory() as connection:return jsonable_encoder(hazards.evaluate(connection,dataset_id))
+    @app.post('/v1/admin/datasets/{dataset_id}/hazard-events/{ident}/{action}')
+    def hazard_change(dataset_id:str,ident:UUID,action:str,change:hazards.EventChange,value=Depends(admin)):
+        if action not in ('acknowledge','retract'):raise ValueError('unsupported hazard action')
+        with db() as connection:return hazards.change_event(connection,dataset_id,ident,change,value.subject,retract=action=='retract')
+    @app.get('/v1/admin/datasets/{dataset_id}/resources')
+    def admin_resources(dataset_id:str,value=Depends(admin)):
+        with db() as connection:return quotas.report(connection,dataset_id,settings.limits)
     @app.get('/v1/admin/datasets/{dataset_id}')
     def admin_overview(dataset_id:str,value=Depends(admin)):
         with db() as connection:return jsonable_encoder(administration.overview(connection,dataset_id))

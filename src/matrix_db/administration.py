@@ -10,7 +10,7 @@ from psycopg.types.json import Jsonb
 from .contracts import Contract,Observation
 from .arrays import canonical
 from .storage import PostgresStore
-from . import quality,lifecycle,api_jobs
+from . import quality,lifecycle,api_jobs,hazards
 
 class MetadataChange(Contract):
     expected_checksum: str=Field(pattern=r'^[a-f0-9]{64}$')
@@ -50,8 +50,11 @@ def overview(connection,dataset):
     except KeyError:quality_policy=None
     try:revision,p=lifecycle.policy_for(connection,dataset);retention_policy={'revision':revision,'policy':p.model_dump(mode='json')}
     except KeyError:retention_policy=None
+    try:revision,p=hazards.get_policy(connection,dataset);hazard_policy={'revision':revision,'policy':p.model_dump(mode='json')}
+    except KeyError:hazard_policy=None
+    hazard_events=hazards.rows(connection,"SELECT * FROM matrix_db.hazard_events WHERE dataset_id=%s AND status='active' ORDER BY opened_at,id LIMIT 20",(dataset,))
     return {'entry':entry.model_dump(mode='json'),'checksum':checksum(entry),'observations':{'total':observation[0],'withdrawn':observation[1],'latest_valid_time':observation[2]},
-        'array_tiers':tiers,'provider':provider[0] if provider else None,'quality_policy':quality_policy,'retention_policy':retention_policy}
+        'array_tiers':tiers,'provider':provider[0] if provider else None,'quality_policy':quality_policy,'retention_policy':retention_policy,'hazard_policy':hazard_policy,'hazard_events':hazard_events}
 
 def edit_metadata(connection,dataset,change,principal):
     connection.execute('SELECT id FROM matrix_db.datasets WHERE id=%s FOR UPDATE',(dataset,))

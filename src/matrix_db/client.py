@@ -4,8 +4,8 @@ from urllib.parse import urlparse,quote
 import httpx
 
 class MatrixDBError(Exception):
-    def __init__(self,code,message,status=0,request_id=None):
-        super().__init__(message);self.code=code;self.status=status;self.request_id=request_id
+    def __init__(self,code,message,status=0,request_id=None,retry_after=None):
+        super().__init__(message);self.code=code;self.status=status;self.request_id=request_id;self.retry_after=retry_after
 
 class MatrixDBClient:
     def __init__(self,base_url,token,*,timeout=15,read_retries=1,transport=None):
@@ -32,7 +32,8 @@ class MatrixDBClient:
         except ValueError:raise MatrixDBError('invalid_response','Matrix DB returned an invalid response',response.status_code) from None
         if not response.is_success:
             error=body.get('error',{}) if isinstance(body,dict) else {}
-            raise MatrixDBError(error.get('code','http_error'),error.get('message','Matrix DB request failed'),response.status_code,error.get('request_id'))
+            retry=response.headers.get('Retry-After','')
+            raise MatrixDBError(error.get('code','http_error'),error.get('message','Matrix DB request failed'),response.status_code,error.get('request_id'),int(retry) if retry.isdigit() and len(retry)<=5 else None)
         return body
     def datasets(self,*,limit=100,after=None):return self.request('GET','v1/datasets',params={'limit':limit,**({} if after is None else {'after':after})},read_only=True)
     def dataset(self,dataset_id):return self.request('GET','v1/datasets/'+quote(dataset_id,safe=''),read_only=True)

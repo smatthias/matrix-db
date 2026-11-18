@@ -20,3 +20,8 @@ test('structured errors and cancellation',async()=>{
  const controller=new AbortController();controller.abort();
  await assert.rejects(client.query({},controller.signal),error=>error.code==='aborted');
 });
+
+test('capacity errors expose Retry-After without automatic replay',async()=>{
+ let calls=0;const client=new MatrixDBClient('https://matrix.invalid',token,{readRetries:3,fetch:async()=>{calls++;return new Response(JSON.stringify({error:{code:'quota_exceeded',message:'capacity reached'}}),{status:429,headers:{'Retry-After':'12'}});}});
+ await assert.rejects(client.query({dataset_id:'weather'}),error=>error.status===429&&error.retryAfter===12);assert.equal(calls,1);
+});

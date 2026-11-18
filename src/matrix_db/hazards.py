@@ -137,14 +137,16 @@ def evaluate(connection,dataset,now=None):
   AND valid_time>=%s AND valid_time<=%s ORDER BY valid_time,id LIMIT %s''',(dataset,start,now,MAX_SAMPLES+1)).fetchall()
  if len(raw)>MAX_SAMPLES:raise ValueError('hazard sample budget exceeded')
  inputs=[(Observation.model_validate(r),rev,at) for r,rev,at in raw];findings=assess(policy,inputs,now);ident=uuid4()
+ for finding in findings:
+  if finding['state']=='detected':
+   suppressed=connection.execute("SELECT 1 FROM matrix_db.hazard_events WHERE dataset_id=%s AND policy_revision=%s AND rule_id=%s AND status='retracted' AND support_hash=%s AND NOT EXISTS(SELECT 1 FROM matrix_db.hazard_events WHERE dataset_id=%s AND policy_revision=%s AND rule_id=%s AND status='active') LIMIT 1",(dataset,revision,finding['rule_id'],finding['support_hash'],dataset,revision,finding['rule_id'])).fetchone()
+   if suppressed:finding['state']='suppressed'
  connection.execute('INSERT INTO matrix_db.hazard_assessments VALUES (%s,%s,%s,%s,%s,%s)',(ident,dataset,revision,now,start,Jsonb(findings)))
  for sample,rev,_ in inputs:connection.execute('INSERT INTO matrix_db.hazard_assessment_inputs VALUES (%s,%s,%s,%s)',(ident,dataset,sample.id,rev))
  for finding in findings:
   active=rows(connection,"SELECT * FROM matrix_db.hazard_events WHERE dataset_id=%s AND policy_revision=%s AND rule_id=%s AND status='active' FOR UPDATE",(dataset,revision,finding['rule_id']))
   event=active[0] if active else None;state=finding['state']
   if event is None and state=='detected':
-   suppressed=connection.execute("SELECT 1 FROM matrix_db.hazard_events WHERE dataset_id=%s AND policy_revision=%s AND rule_id=%s AND status='retracted' AND support_hash=%s LIMIT 1",(dataset,revision,finding['rule_id'],finding['support_hash'])).fetchone()
-   if suppressed:continue
    event_id=uuid4()
    connection.execute("""INSERT INTO matrix_db.hazard_events(id,dataset_id,policy_revision,rule_id,hazard_type,severity,status,detection_state,opened_at,evaluated_at,last_valid_time,reason,metric,longitude,latitude,bbox,support_hash,assessment_id)
     VALUES (%s,%s,%s,%s,%s,%s,'active',%s,%s,%s,%s,'threshold detected',%s,%s,%s,%s,%s,%s)""",
@@ -189,7 +191,8 @@ def detail(connection,dataset,ident):
  assessment=rows(connection,'SELECT id,policy_revision,evaluated_at,window_start,findings FROM matrix_db.hazard_assessments WHERE id=%s',(event['assessment_id'],))[0]
  assessment['findings']=[f for f in assessment['findings'] if f['rule_id']==event['rule_id']]
  history=rows(connection,'SELECT sequence,kind,severity,actor,reason,at,assessment_id FROM matrix_db.hazard_feed WHERE event_id=%s ORDER BY sequence DESC LIMIT 100',(ident,))
- return {'event':event,'assessment':assessment,'history':history,'history_limit':100}
+ policy=connection.execute('SELECT definition FROM matrix_db.hazard_policies WHERE dataset_id=%s AND revision=%s',(dataset,event['policy_revision'])).fetchone()[0]
+ return {'event':event,'policy':policy,'assessment':assessment,'history':history,'history_limit':100}
 
 def main():
  import argparse,json,time

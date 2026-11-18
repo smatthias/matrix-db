@@ -50,7 +50,7 @@ Detected events open once, update when evidence/state changes and retain their i
 active. Severity changes produce an explicit transition. Repeat assessments with unchanged
 signals do not spam transition notifications. Resolving then detecting again opens a new ID.
 Acknowledgement records review but does not resolve the signal. Administrator retraction
-requires a reason and expected event revision. Identical supporting evidence will not reopen
+requires a reason and expected event revision. An assessment labels matching evidence suppressed after retraction. Identical supporting evidence will not reopen
 a retracted signal; changed source revisions/record identities or a new policy can generate a
 new signal. Retraction is not a permanent mute of a geographic region.
 
@@ -66,7 +66,7 @@ Dataset-scoped readers can use:
 
 - GET /v1/hazards/{dataset}?status=all|active|resolved|retracted|superseded&limit=50&after=UUID
 - GET /v1/hazards/{dataset}/policy (includes the latest assessment)
-- GET /v1/hazards/{dataset}/events/{event} (current event, assessment evidence and up to 100 recent transitions)
+- GET /v1/hazards/{dataset}/events/{event} (current event, exact policy revision, assessment evidence and up to 100 recent transitions)
 
 Event pages are UUID-ordered bounded live lists, not a snapshot or newest-first stream.
 Administrative endpoints use /v1/admin/datasets/{dataset}/hazard-policy and hazard-evaluate.

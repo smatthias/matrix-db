@@ -82,7 +82,7 @@ class HazardStorageTest(unittest.TestCase):
   with self.factory() as connection:hazards.change_event(connection,'demo-weather',event['id'],hazards.EventChange(expected_revision=event['revision'],reason='reviewed'),'operator')
   event=self.events()[0];self.assertIsNotNone(event['acknowledged_at'])
   with self.factory() as connection:hazards.change_event(connection,'demo-weather',event['id'],hazards.EventChange(expected_revision=event['revision'],reason='false positive'),'operator',retract=True)
-  self.evaluate(NOW+timedelta(seconds=1));self.assertEqual(len(self.events()),1);self.assertEqual(self.events()[0]['status'],'retracted')
+  result=self.evaluate(NOW+timedelta(seconds=1));self.assertEqual(result['findings'][0]['state'],'suppressed');self.assertEqual(len(self.events()),1);self.assertEqual(self.events()[0]['status'],'retracted')
   self.correct(36,1);self.evaluate(NOW+timedelta(seconds=2));self.assertEqual(len(self.events()),2)
  def test_policy_revision_conflict_units_and_supersession(self):
   self.evaluate()
@@ -92,6 +92,7 @@ class HazardStorageTest(unittest.TestCase):
    with self.factory() as connection:hazards.register(connection,hazards.PolicyChange(expected_revision=1,policy=policy(unit='K')),'test')
   with self.factory() as connection:hazards.register(connection,hazards.PolicyChange(expected_revision=1,policy=policy(trigger_threshold=36)),'test')
   self.assertEqual(self.events()[0]['status'],'superseded')
+  self.assertEqual(hazards.detail(self.db,'demo-weather',self.events()[0]['id'])['policy']['rules'][0]['trigger_threshold'],30)
   self.assertEqual(self.db.execute('SELECT kind FROM matrix_db.hazard_feed ORDER BY sequence DESC LIMIT 1').fetchone()[0],'policy_superseded')
  def test_budget_and_write_failure_roll_back_complete_assessment(self):
   with patch('matrix_db.hazards.MAX_SAMPLES',0):
